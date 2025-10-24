@@ -342,7 +342,7 @@ nok = sess_kpi.loc[~sess_kpi["is_ok_filt"]].copy()
 nok["moment"] = nok["moment"].fillna("Unknown")
 
 
-def map_phase(moment):
+def map_phase(moment, phase_map=PHASE_MAP):
     # Return the high-level phase for a raw moment value.
 
     if pd.isna(moment):
@@ -357,7 +357,7 @@ def map_phase(moment):
 
     moment_str = str(moment)
 
-    for phase, moments in PHASE_MAP.items():
+    for phase, moments in phase_map.items():
         if moment_str in moments:
             return phase
 
