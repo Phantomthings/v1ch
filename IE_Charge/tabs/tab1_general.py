@@ -7,7 +7,8 @@ from textwrap import dedent
 
 from tabs.context import get_context
 
-TAB_CODE = dedent("""
+TAB_CODE = dedent(
+    """
     st.subheader("Indicateurs globaux")
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Total charges", total)
@@ -129,8 +130,8 @@ TAB_CODE = dedent("""
             })
             full_table = pd.concat([counts_moment, total_row], ignore_index=True)
             st.dataframe(full_table, use_container_width=True)
-# Tab 2
-""")
+    """
+)
 
 def render():
     ctx = get_context()
