@@ -73,7 +73,71 @@ else:
         def code_match(key):
             return key[2] in selected_codes and (code_type_tab == "Tous" or key[3] == code_type_tab)
 
-        matched_rows = tbl_all[tbl_all["_key"].apply(code_match)]
+        if "tbl_all" not in locals() or not isinstance(tbl_all, pd.DataFrame):
+            tbl_all = pd.DataFrame()
+            if "sess_kpi" in locals():
+                from analyses.kpi_cal import EVI_MOMENT, EVI_CODE, DS_PC
+
+                err_ctx = sess_kpi.loc[~sess_kpi["is_ok_filt"]].copy()
+                if not err_ctx.empty:
+                    evi_step = pd.to_numeric(err_ctx[EVI_MOMENT], errors="coerce").fillna(0).astype(int)
+                    evi_code = pd.to_numeric(err_ctx[EVI_CODE], errors="coerce").fillna(0).astype(int)
+                    ds_pc    = pd.to_numeric(err_ctx[DS_PC], errors="coerce").fillna(0).astype(int)
+
+                    def _local_map(step_val):
+                        try:
+                            step_val = int(step_val)
+                        except Exception:
+                            return "Unknown"
+                        if step_val == 0:
+                            return "Fin de charge"
+                        if 1 <= step_val <= 2:
+                            return "Init"
+                        if 4 <= step_val <= 6:
+                            return "Lock Connector"
+                        if step_val == 7:
+                            return "CableCheck"
+                        if step_val == 8:
+                            return "Charge"
+                        if step_val > 8:
+                            return "Fin de charge"
+                        return "Unknown"
+
+                    sub_evi = err_ctx.loc[(ds_pc.eq(8192)) | ((ds_pc.eq(0)) & (evi_code.ne(0)))].copy()
+                    sub_evi["_step"]   = evi_step.loc[sub_evi.index]
+                    sub_evi["_moment"] = sub_evi["_step"].map(_local_map)
+                    sub_evi["_code"]   = evi_code.loc[sub_evi.index]
+                    sub_evi["_type"]   = "Erreur_EVI"
+
+                    sub_ds = err_ctx.loc[ds_pc.ne(0) & ds_pc.ne(8192)].copy()
+                    sub_ds["_step"]   = evi_step.loc[sub_ds.index]
+                    sub_ds["_moment"] = sub_ds["_step"].map(_local_map)
+                    sub_ds["_code"]   = ds_pc.loc[sub_ds.index]
+                    sub_ds["_type"]   = "Erreur_DownStream"
+
+                    all_err = pd.concat([sub_evi, sub_ds], ignore_index=True)
+                    if not all_err.empty:
+                        tbl_all = (
+                            all_err.assign(
+                                _key=lambda d: list(zip(
+                                    d.get("_moment", [""] * len(d)),
+                                    d.get("_step",   [0]  * len(d)),
+                                    d.get("_code",   [0]  * len(d)),
+                                    d.get("_type",   [""] * len(d)),
+                                ))
+                            )
+                            .groupby("_key")
+                            .size()
+                            .reset_index(name="Occurrences")
+                            .sort_values("Occurrences", ascending=False)
+                        )
+                        total_err = tbl_all["Occurrences"].sum()
+                        if total_err:
+                            tbl_all["%"] = (tbl_all["Occurrences"] / total_err * 100).round(2)
+                        else:
+                            tbl_all["%"] = 0.0
+
+        matched_rows = tbl_all[tbl_all.get("_key", pd.Series(dtype=object)).apply(code_match)] if not tbl_all.empty else pd.DataFrame()
 
         if matched_rows.empty:
             st.info("Aucune donnée pour les codes spécifiés.")
@@ -147,7 +211,12 @@ else:
                     err_sum["ELTO"] = BASE_CHARGE_URL + err_sum["ID"].astype(str).str.strip()
 
                 if "Vehicle" not in err_sum.columns and "ID" in err_sum.columns:
-                    if "charges_mac" in locals(): 
+                    if (
+                        "charges_mac" in locals()
+                        and isinstance(charges_mac, pd.DataFrame)
+                        and not charges_mac.empty
+                        and {"ID", "Vehicle"}.issubset(charges_mac.columns)
+                    ):
                         veh_map = charges_mac[["ID", "Vehicle"]].drop_duplicates("ID", keep="last")
                         err_sum = err_sum.merge(veh_map, on="ID", how="left")
                 cols_aff = ["Site", "Datetime start", "Datetime end",
@@ -191,23 +260,26 @@ else:
             .reset_index(name="Occurrences")
         )
 
-        total_charges = (
-            dfv.groupby("Vehicle")
-            .size()
-            .reset_index(name="Total Charges")
-        )
+        if "dfv" in locals() and isinstance(dfv, pd.DataFrame) and not dfv.empty and "Vehicle" in dfv.columns:
+            total_charges = (
+                dfv.groupby("Vehicle")
+                .size()
+                .reset_index(name="Total Charges")
+            )
 
-        occ_vehicle = occ_vehicle.merge(
-            total_charges,
-            on="Vehicle",
-            how="left"
-        )
+            occ_vehicle = occ_vehicle.merge(
+                total_charges,
+                on="Vehicle",
+                how="left"
+            )
 
-        occ_vehicle["Vehicle Label"] = occ_vehicle.apply(
-            lambda row: f"{row['Vehicle']} ({int(row['Total Charges'])})"
-            if pd.notna(row["Total Charges"]) else f"{row['Vehicle']} (0)",
-            axis=1
-        )
+            occ_vehicle["Vehicle Label"] = occ_vehicle.apply(
+                lambda row: f"{row['Vehicle']} ({int(row['Total Charges'])})"
+                if pd.notna(row["Total Charges"]) else f"{row['Vehicle']} (0)",
+                axis=1
+            )
+        else:
+            occ_vehicle["Vehicle Label"] = occ_vehicle["Vehicle"].astype(str)
 
         occ_vehicle = occ_vehicle.sort_values("Occurrences", ascending=True)
 
@@ -373,6 +445,9 @@ def render():
     local_vars.setdefault('hide_zero_labels', getattr(ctx, 'hide_zero_labels', None))
     local_vars.setdefault('with_charge_link', getattr(ctx, 'with_charge_link', None))
     local_vars.setdefault('evi_counts_pivot', getattr(ctx, 'evi_counts_pivot', None))
+    tables_ref = local_vars.get('tables')
+    if isinstance(tables_ref, dict):
+        local_vars.setdefault('charges_mac', tables_ref.get('charges_mac', pd.DataFrame()))
     # remove None entries
     local_vars = {k: v for k, v in local_vars.items() if v is not None}
     exec(TAB_CODE, globals_dict, local_vars)
