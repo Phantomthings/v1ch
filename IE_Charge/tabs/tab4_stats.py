@@ -403,5 +403,10 @@ def render():
     local_vars.setdefault('evi_counts_pivot', getattr(ctx, 'evi_counts_pivot', None))
     # remove None entries
     local_vars = {k: v for k, v in local_vars.items() if v is not None}
-    exec(TAB_CODE, globals_dict, local_vars)
+
+    exec_namespace = dict(globals_dict)
+    exec_namespace.update(local_vars)
+    exec_namespace.setdefault("__builtins__", __builtins__)
+
+    exec(TAB_CODE, exec_namespace)
 
