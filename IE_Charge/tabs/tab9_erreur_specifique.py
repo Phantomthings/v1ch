@@ -10,7 +10,7 @@ TAB_CODE = """
 st.markdown("### 🔍 Analyse Erreur Spécifique")
 with st.expander("🔍 Filtrer par code", expanded=False):
     code_raw_tab = st.text_input(
-        "N° d’erreur / Code PC",
+        "N° d'erreur / Code PC",
         value="",
         placeholder="ex : 73, 84, 90",
         key="code_filter_values_tab",
@@ -56,6 +56,9 @@ def _mask_code_local(df: pd.DataFrame, code_raw: str, code_type: str):
     if len(masks) == 1:
         return masks[0]
     return masks[0] | masks[1]
+
+# Initialize selected_codes outside the conditional block
+selected_codes = []
 
 if not code_raw_tab.strip():
     st.info("⏳ Saisissez un ou plusieurs codes dans le filtre")
@@ -320,8 +323,8 @@ else:
         )
         st.plotly_chart(fig_month, use_container_width=True)
     else:
-        st.info("Colonnes 'Datetime start' ou 'Site' manquantes pour tracer l’histogramme.")
-# Nombre d’occurrences par site et PDC
+        st.info("Colonnes 'Datetime start' ou 'Site' manquantes pour tracer l'histogramme.")
+# Nombre d'occurrences par site et PDC
 if not code_raw_tab.strip():
     st.info("⏳ Saisissez un ou plusieurs codes dans le filtre")
 else:
@@ -332,7 +335,7 @@ else:
                 .reset_index(name="Occurrences")
                 .sort_values("Occurrences", ascending=False)
         )
-        st.markdown("### Nombre d’occurrences par site et PDC")
+        st.markdown("### Nombre d'occurrences par site et PDC")
         st.dataframe(occ, use_container_width=True, hide_index=True)
     else:
         st.info("Colonnes 'Site' ou 'PDC' absentes pour compter les occurrences.")
@@ -451,4 +454,3 @@ def render():
     # remove None entries
     local_vars = {k: v for k, v in local_vars.items() if v is not None}
     exec(TAB_CODE, globals_dict, local_vars)
-
