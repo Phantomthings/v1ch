@@ -725,5 +725,9 @@ def render():
     local_vars.setdefault('with_charge_link', getattr(ctx, 'with_charge_link', None))
     local_vars.setdefault('evi_counts_pivot', getattr(ctx, 'evi_counts_pivot', None))
     # remove None entries
-    local_vars = {k: v for k, v in local_vars.items() if v is not None}
-    exec(TAB_CODE, globals_dict, local_vars)
+    combined = {
+        k: v
+        for k, v in {**globals_dict, **local_vars}.items()
+        if v is not None
+    }
+    exec(TAB_CODE, combined, combined)
