@@ -234,11 +234,19 @@ def _clamp(d):
     if d > max_date: return max_date
     return d
 
+# init default range if unset
+if st.session_state.d1 is None or st.session_state.d2 is None:
+    st.session_state.d1 = min_date
+    st.session_state.d2 = max_date
+
 # init/clamp d1/d2
 d1 = _clamp(st.session_state.d1) or min_date
 d2 = _clamp(st.session_state.d2) or max_date
 if d1 > d2:
     d1, d2 = d2, d1
+    st.session_state.d1, st.session_state.d2 = d1, d2
+else:
+    # ensure session state stays in sync with clamped values
     st.session_state.d1, st.session_state.d2 = d1, d2
 
 # Initialise le compteur si besoin
