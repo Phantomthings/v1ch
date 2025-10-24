@@ -25,13 +25,12 @@ else:
     # filtre moments 
     if "moment_sel" in st.session_state and st.session_state.moment_sel:
         evi_f = evi_f[evi_f["moment"].isin(st.session_state.moment_sel)]
-    if evi_f.empty:
+    site_list = [] if evi_f.empty else sorted(evi_f["Site"].unique())
+
+    if not site_list:
         st.info("Aucune combinaison sur ce périmètre (après filtres).")
-
-    else:
-        site_list = sorted(evi_f["Site"].unique())
-
-    for site in sites_list:
+    
+    for site in site_list:
         st.markdown(f"### 📍 {site}")
         hide_zero = st.checkbox("Masquer colonnes vides (0)", key=f"hide_zeros_{site}")
 
