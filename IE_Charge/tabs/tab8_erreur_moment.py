@@ -341,26 +341,27 @@ by_site_f["% Réussite"] = np.where(
 nok = sess_kpi.loc[~sess_kpi["is_ok_filt"]].copy()
 nok["moment"] = nok["moment"].fillna("Unknown")
 
-  def map_phase(moment):
-      """Return the high-level phase for a raw moment value."""
 
-      if pd.isna(moment):
-          return "Unknown"
+def map_phase(moment):
+    # Return the high-level phase for a raw moment value.
 
-      if isinstance(moment, (list, tuple, set)):
-          for value in moment:
-              mapped = map_phase(value)
-              if mapped != "Unknown":
-                  return mapped
-          return "Unknown"
+    if pd.isna(moment):
+        return "Unknown"
 
-      moment_str = str(moment)
+    if isinstance(moment, (list, tuple, set)):
+        for value in moment:
+            mapped = map_phase(value)
+            if mapped != "Unknown":
+                return mapped
+        return "Unknown"
 
-      for phase, moments in PHASE_MAP.items():
-          if moment_str in moments:
-              return phase
+    moment_str = str(moment)
 
-      return "Unknown"
+    for phase, moments in PHASE_MAP.items():
+        if moment_str in moments:
+            return phase
+
+    return "Unknown"
 
 nok["Phase"] = nok["moment"].map(map_phase)
 
@@ -422,35 +423,35 @@ st.dataframe(df_final, use_container_width=True, hide_index=True)
 err = sess_kpi[~sess_kpi["is_ok_filt"]].copy()
 err_nonempty = err[err["type_erreur"].notna() & (err["type_erreur"] != "")]
 if not err_nonempty.empty:
-        counts_t = (
-            err_nonempty.groupby("type_erreur")
-            .size()
-            .reset_index(name="Nb")
-            .sort_values("Nb", ascending=False)
+    counts_t = (
+        err_nonempty.groupby("type_erreur")
+        .size()
+        .reset_index(name="Nb")
+        .sort_values("Nb", ascending=False)
+    )
+
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        fig = px.pie(
+            counts_t,
+            names="type_erreur",
+            values="Nb",
+            title="Types d’erreurs (%)",
+            hole=0.3,
         )
+        fig.update_traces(
+            textinfo="label+percent",
+            pull=[0.05] * len(counts_t)
+        )
+        plot(fig, "tab1_types_pie")
 
-        col1, col2 = st.columns([2, 1])
-        with col1:
-            fig = px.pie(
-                counts_t,
-                names="type_erreur",
-                values="Nb",
-                title="Types d’erreurs (%)",
-                hole=0.3,
-            )
-            fig.update_traces(
-                textinfo="label+percent",
-                pull=[0.05] * len(counts_t)
-            )
-            plot(fig, "tab1_types_pie")
-
-        with col2:
-            total_row = pd.DataFrame({
-                "type_erreur": ["Total"],
-                "Nb": [counts_t["Nb"].sum()]
-            })
-            full_table = pd.concat([counts_t, total_row], ignore_index=True)
-            st.dataframe(full_table, use_container_width=True, hide_index=True)
+    with col2:
+        total_row = pd.DataFrame({
+            "type_erreur": ["Total"],
+            "Nb": [counts_t["Nb"].sum()]
+        })
+        full_table = pd.concat([counts_t, total_row], ignore_index=True)
+        st.dataframe(full_table, use_container_width=True, hide_index=True)
 else:
     st.info("Aucune erreur à afficher pour ce périmètre.")
 
@@ -526,9 +527,9 @@ err_evi = err[err["type_erreur"] == "Erreur_EVI"].copy()
 if not err_evi.empty and "moment" in err_evi.columns:
     counts_moment = (
         err_evi.groupby("moment")
-            .size()
-            .reindex(MOMENT_ORDER, fill_value=0)
-            .reset_index(name="Nb")
+        .size()
+        .reindex(MOMENT_ORDER, fill_value=0)
+        .reset_index(name="Nb")
     )
     total_evi_err = counts_moment["Nb"].sum()
     if total_evi_err > 0:
