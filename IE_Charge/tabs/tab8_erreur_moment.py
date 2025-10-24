@@ -25,8 +25,37 @@ def _map_moment(val: int) -> str:
     if val > 8:
         return "Fin de charge"
     return "Unknown"
+
+# Define PHASE_MAP before it's used
+PHASE_MAP = {
+    "Avant charge": {"Init", "Lock Connector", "CableCheck"},
+    "Charge": {"Charge"},
+    "Fin de charge": {"Fin de charge"},
+    "Unknown": {"Unknown"}
+}
+
+def map_phase(moment):
+    # Return the high-level phase for a raw moment value.
+    if pd.isna(moment):
+        return "Unknown"
+
+    if isinstance(moment, (list, tuple, set)):
+        for value in moment:
+            mapped = map_phase(value)
+            if mapped != "Unknown":
+                return mapped
+        return "Unknown"
+
+    moment_str = str(moment)
+
+    for phase, moments in PHASE_MAP.items():
+        if moment_str in moments:
+            return phase
+
+    return "Unknown"
+
 st.divider()
-st.subheader("🔍 Analyse des codes d’erreur")
+st.subheader("🔍 Analyse des codes d'erreur")
 st.divider()
 err = sess_kpi[~sess_kpi["is_ok_filt"]].copy()
 if err.empty:
@@ -69,7 +98,7 @@ else:
     col1, col2 = st.columns(2)
 
     with col1:
-        df_top = pd.DataFrame(top3_keys, columns=["Moment", EVI_MOMENT, "Code", "Type d’erreur"])
+        df_top = pd.DataFrame(top3_keys, columns=["Moment", EVI_MOMENT, "Code", "Type d'erreur"])
         df_top["Occurrences"] = top3_all["Occurrences"].values
         df_top["%"] = top3_all["%"].values
         st.dataframe(df_top, use_container_width=True, hide_index=True)
@@ -255,24 +284,6 @@ else:
             sub["_step"] = evi_step.loc[sub.index]
             sub["_ds"]   = ds_pc.loc[sub.index]
             sub["_site"] = err[SITE_COL].loc[sub.index]
-            def _map_moment(val: int) -> str:
-                try:
-                    val = int(val)
-                except:
-                    return "Unknown"
-                if val == 0:
-                    return "Fin de charge"
-                if 1 <= val <= 2:
-                    return "Init"
-                if 4 <= val <= 6:
-                    return "Lock Connector"
-                if val == 7:
-                    return "CableCheck"
-                if val == 8:
-                    return "Charge"
-                if val > 8:
-                    return "Fin de charge"
-                return "Unknown"
             sub["_moment"] = sub["_step"].map(_map_moment)
 
             if sub.empty:
@@ -316,15 +327,10 @@ else:
             st.info("Colonnes Downstream manquantes.")
 
 st.divider()
-st.subheader("🔍 Analayse des moments d’erreur")
+st.subheader("🔍 Analayse des moments d'erreur")
 st.divider()
 err = sess_kpi[~sess_kpi["is_ok_filt"]].copy()
-PHASE_MAP = {
-    "Avant charge": {"Init", "Lock Connector", "CableCheck"},
-    "Charge": {"Charge"},
-    "Fin de charge": {"Fin de charge"},
-    "Unknown": {"Unknown"}
-}
+
 by_site_f = (
     sess_kpi.groupby(SITE_COL, as_index=False)
             .agg(Total_Charges=("is_ok_filt", "count"),
@@ -340,28 +346,6 @@ by_site_f["% Réussite"] = np.where(
 
 nok = sess_kpi.loc[~sess_kpi["is_ok_filt"]].copy()
 nok["moment"] = nok["moment"].fillna("Unknown")
-
-
-def map_phase(moment, phase_map=PHASE_MAP):
-    # Return the high-level phase for a raw moment value.
-
-    if pd.isna(moment):
-        return "Unknown"
-
-    if isinstance(moment, (list, tuple, set)):
-        for value in moment:
-            mapped = map_phase(value)
-            if mapped != "Unknown":
-                return mapped
-        return "Unknown"
-
-    moment_str = str(moment)
-
-    for phase, moments in phase_map.items():
-        if moment_str in moments:
-            return phase
-
-    return "Unknown"
 
 nok["Phase"] = nok["moment"].map(map_phase)
 
@@ -436,7 +420,7 @@ if not err_nonempty.empty:
             counts_t,
             names="type_erreur",
             values="Nb",
-            title="Types d’erreurs (%)",
+            title="Types d'erreurs (%)",
             hole=0.3,
         )
         fig.update_traces(
@@ -570,7 +554,7 @@ if not err_evi.empty:
                     counts_m,
                     names="moment",
                     values="Nb",
-                    title="Moments d’erreur EVI (%)",
+                    title="Moments d'erreur EVI (%)",
                     hole=0.25,
                     color="moment",
                     color_discrete_map=MOMENT_PALETTE,
@@ -601,7 +585,7 @@ if not err_evi.empty:
                     counts_ma,
                     names="moment_avancee",
                     values="Nb",
-                    title="Moments d’erreur EVI (Avancé) (%) ",
+                    title="Moments d'erreur EVI (Avancé) (%) ",
                     hole=0.25,
                     color="moment_avancee",
                     color_discrete_map={
@@ -674,7 +658,7 @@ if not err_ds.empty:
                     counts_m_ds,
                     names="moment",
                     values="Nb",
-                    title="Moments d’erreur DownStream (%)",
+                    title="Moments d'erreur DownStream (%)",
                     hole=0.25,
                     color="moment",
                     color_discrete_map=MOMENT_PALETTE,
@@ -705,7 +689,7 @@ if not err_ds.empty:
                     counts_ma_ds,
                     names="moment_avancee",
                     values="Nb",
-                    title="Moments d’erreur DownStream (Avancé) (%) ",
+                    title="Moments d'erreur DownStream (Avancé) (%) ",
                     hole=0.25,
                     color="moment_avancee",
                     color_discrete_map={
@@ -743,4 +727,3 @@ def render():
     # remove None entries
     local_vars = {k: v for k, v in local_vars.items() if v is not None}
     exec(TAB_CODE, globals_dict, local_vars)
-
