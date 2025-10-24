@@ -73,8 +73,8 @@ else:
     if not selected_codes:
         st.warning("Aucun code valide reconnu.")
     else:
-        def code_match(key):
-            return key[2] in selected_codes and (code_type_tab == "Tous" or key[3] == code_type_tab)
+        def code_match(key, codes=selected_codes, type_filter=code_type_tab):
+            return key[2] in codes and (type_filter == "Tous" or key[3] == type_filter)
 
         if "tbl_all" not in locals() or not isinstance(tbl_all, pd.DataFrame):
             tbl_all = pd.DataFrame()
