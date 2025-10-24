@@ -341,11 +341,26 @@ by_site_f["% Réussite"] = np.where(
 nok = sess_kpi.loc[~sess_kpi["is_ok_filt"]].copy()
 nok["moment"] = nok["moment"].fillna("Unknown")
 
-def map_phase(moment):
-    for phase, moments in PHASE_MAP.items():
-        if moment in moments:
-            return phase
-    return "Unknown"
+  def map_phase(moment):
+      """Return the high-level phase for a raw moment value."""
+
+      if pd.isna(moment):
+          return "Unknown"
+
+      if isinstance(moment, (list, tuple, set)):
+          for value in moment:
+              mapped = map_phase(value)
+              if mapped != "Unknown":
+                  return mapped
+          return "Unknown"
+
+      moment_str = str(moment)
+
+      for phase, moments in PHASE_MAP.items():
+          if moment_str in moments:
+              return phase
+
+      return "Unknown"
 
 nok["Phase"] = nok["moment"].map(map_phase)
 
