@@ -59,9 +59,7 @@ if sess_pdc.empty:
     st.stop()
 # Récap
 BASE_CHARGE_URL = "https://elto.nidec-asi-online.com/Charge/detail?id="
-df_src = globals().get("sess_pdc", None)
-if df_src is None or not isinstance(df_src, pd.DataFrame) or df_src.empty:
-    df_src = sess  
+df_src = sess_pdc.copy()
 if df_src.empty:
     st.info("Aucune donnée disponible pour ce périmètre.")
 else:
