@@ -6,7 +6,8 @@ import streamlit as st
 import plotly.express as px
 from sqlalchemy import create_engine
 import plotly.graph_objects as go
-
+import datetime
+import calendar
 from tabs.context import get_context
 from tabs import (
     tab1_general,
@@ -184,25 +185,42 @@ if sessions.empty:
 SITE_COL = "Site" if "Site" in sessions.columns else "Name Project"
 sites = sorted(sessions[SITE_COL].dropna().unique().tolist())
 
-# état initial
+# État initial
 if "site_sel" not in st.session_state:
     st.session_state.site_sel = sites[:] 
-if "d1" not in st.session_state:
-    st.session_state.d1 = None
-if "d2" not in st.session_state:
-    st.session_state.d2 = None
+
+# Flag pour limiter les sites (doit être avant le widget)
+if "limit_sites_to_20" not in st.session_state:
+    st.session_state.limit_sites_to_20 = False
+
+if st.session_state.limit_sites_to_20:
+    if len(st.session_state.site_sel) > 20:
+        st.session_state.site_sel = st.session_state.site_sel[:20]
+    st.session_state.limit_sites_to_20 = False
 
 # Préconversion des dates 
 dt_start = pd.to_datetime(sessions["Datetime start"], errors="coerce")
 
-# BARRE DE FILTRES 
-c1, c2, c3, c4 = st.columns([2, 5, 2, 5], gap="small")
+# Initialisation des paramètres de date
+today = datetime.date.today()
+if "date_mode" not in st.session_state:
+    st.session_state.date_mode = "mois_complet"
+if "focus_year" not in st.session_state:
+    st.session_state.focus_year = today.year
+if "focus_month" not in st.session_state:
+    st.session_state.focus_month = today.month
+
+# ========== FILTRES ==========
+st.markdown("### 🎯 Filtres")
+
+# Ligne 1: Sites
+c1, c2 = st.columns([1, 5], gap="small")
 
 with c1:
     if st.button("✅ Tous les sites", key="btn_all_sites", use_container_width=True):
         st.session_state.site_sel = sites[:]   
         st.rerun()
-st.session_state.setdefault("site_sel", sites[:])
+
 with c2:
     st.multiselect(
         "Sites",
@@ -215,114 +233,111 @@ with c2:
 if len(st.session_state.site_sel) == 0:
     st.session_state.site_sel = sites[:]
 
-# Bornes dates
-site_mask = sessions[SITE_COL].isin(st.session_state.site_sel)
-dt_site = dt_start[site_mask]
-min_dt = dt_site.min()
-max_dt = dt_site.max()
-if pd.isna(min_dt) or pd.isna(max_dt):
-    st.error("Aucune date disponible pour les sites sélectionnés.")
-    st.stop()
+# Ligne 2: Mode de période (4 boutons)
+st.markdown("#### 📅 Période d'analyse")
+col_mode_full, col_mode_j1, col_mode_week, col_mode_all = st.columns(4)
 
-min_date = min_dt.date()
-max_date = max_dt.date()
+with col_mode_full:
+    if st.button("📅 Mois Focus", key="btn_mois_complet", use_container_width=True, type="primary" if st.session_state.date_mode == "mois_complet" else "secondary"):
+        st.session_state.date_mode = "mois_complet"
+        st.rerun()
 
-# clamp utilitaire
-def _clamp(d):
-    if d is None: return None
-    if d < min_date: return min_date
-    if d > max_date: return max_date
-    return d
+with col_mode_j1:
+    if st.button("📅 J-1 (Hier)", key="btn_j_minus_1", use_container_width=True, type="primary" if st.session_state.date_mode == "j_minus_1" else "secondary"):
+        st.session_state.date_mode = "j_minus_1"
+        st.rerun()
 
-# init default range if unset
-if st.session_state.d1 is None or st.session_state.d2 is None:
-    st.session_state.d1 = min_date
-    st.session_state.d2 = max_date
+with col_mode_week:
+    if st.button("📅 Semaine -1", key="btn_semaine_minus_1", use_container_width=True, type="primary" if st.session_state.date_mode == "semaine_minus_1" else "secondary"):
+        st.session_state.date_mode = "semaine_minus_1"
+        st.rerun()
 
-# init/clamp d1/d2
-d1 = _clamp(st.session_state.d1) or min_date
-d2 = _clamp(st.session_state.d2) or max_date
-if d1 > d2:
-    d1, d2 = d2, d1
-    st.session_state.d1, st.session_state.d2 = d1, d2
+with col_mode_all:
+    if st.button("📅 Toute la période", key="btn_all_period", use_container_width=True, type="primary" if st.session_state.date_mode == "toute_periode" else "secondary"):
+        st.session_state.date_mode = "toute_periode"
+        # Activer le flag pour limiter à 20 sites au prochain rerun
+        st.session_state.limit_sites_to_20 = True
+        st.rerun()
+
+# Ligne 3: Sélection du mois (UNIQUEMENT si mode = mois_complet)
+if st.session_state.date_mode == "mois_complet":
+    col_year, col_month = st.columns([1, 3])
+
+    with col_year:
+        report_year = st.selectbox(
+            "Année",
+            options=range(today.year, today.year - 5, -1),
+            index=0,
+            key="focus_year"
+        )
+
+    with col_month:
+        month_abbr = list(calendar.month_abbr[1:])
+        current_month_idx = st.session_state.focus_month - 1
+        
+        report_month_str = st.radio(
+            "Mois",
+            options=month_abbr,
+            index=current_month_idx,
+            horizontal=True,
+            key="focus_month_radio"
+        )
+        
+        report_month = month_abbr.index(report_month_str) + 1
+        st.session_state.focus_month = report_month
+
+# ========== CALCUL DES DATES SELON LE MODE ==========
+date_mode = st.session_state.date_mode
+
+# Aujourd'hui
+yesterday = today - datetime.timedelta(days=1)
+
+if date_mode == "j_minus_1":
+    # J-1 = hier uniquement
+    d1 = yesterday
+    d2 = yesterday
+    mode_label = f"📅 J-1 (hier) : {yesterday.strftime('%d/%m/%Y')}"
+
+elif date_mode == "semaine_minus_1":
+    # Semaine -1 = les 7 derniers jours jusqu'à hier
+    d1 = yesterday - datetime.timedelta(days=6)
+    d2 = yesterday
+    mode_label = f"📅 Semaine -1 : du {d1.strftime('%d/%m/%Y')} au {d2.strftime('%d/%m/%Y')}"
+
+elif date_mode == "toute_periode":
+    # Toute la période = du min au max des données disponibles
+    min_dt = dt_start.min()
+    max_dt = dt_start.max()
+    if pd.notna(min_dt) and pd.notna(max_dt):
+        d1 = min_dt.date()
+        d2 = max_dt.date()
+        mode_label = f"📅 Toute la période : du {d1.strftime('%d/%m/%Y')} au {d2.strftime('%d/%m/%Y')}"
+    else:
+        # Fallback si pas de données
+        d1 = today
+        d2 = today
+        mode_label = "📅 Toute la période : Aucune donnée disponible"
+
+else:  # mois_complet
+    year = st.session_state.focus_year
+    month = st.session_state.focus_month
+    _, last_day = calendar.monthrange(year, month)
+    d1 = datetime.date(year, month, 1)
+    d2 = datetime.date(year, month, last_day)
+    mode_label = f"📅 Mois complet : {calendar.month_name[month]} {year}"
+
+# Affichage de la période active avec avertissement si limite de sites atteinte
+if date_mode == "toute_periode" and len(st.session_state.site_sel) == 20:
+    st.info(mode_label)
+    st.warning("⚠️ Limite de 20 sites atteinte pour l'analyse sur toute la période. Sélectionnez moins de sites ou changez de période.")
 else:
-    # ensure session state stays in sync with clamped values
-    st.session_state.d1, st.session_state.d2 = d1, d2
+    st.info(mode_label)
 
-# Initialise le compteur si besoin
-if "widget_key" not in st.session_state:
-    st.session_state.widget_key = 0
+# ========== FILTRAGE DES DONNÉES ==========
+d1_ts = pd.Timestamp(d1)
+d2_ts = pd.Timestamp(d2) + pd.Timedelta(days=1)  # Inclure le dernier jour
 
-with c3:
-    col_btn_all, col_btn_jmoins1 = st.columns(2)
-    col_btn_week, col_btn_month = st.columns(2)
-
-    if col_btn_week.button("📅 Semaine -1", key="btn_week_minus1", use_container_width=True):
-        d2 = st.session_state.get("d2", max_date)
-        new_d1 = max(min_date, d2 - pd.Timedelta(days=7))
-        st.session_state.d1 = new_d1
-        st.session_state.d2 = d2
-        st.session_state.widget_key += 1
-        st.rerun()
-
-    if col_btn_month.button("📅 Mois -1", key="btn_month_minus1", use_container_width=True):
-        d2 = st.session_state.get("d2", max_date)
-        try:
-            new_d1 = (pd.Timestamp(d2) - pd.DateOffset(months=1)).date()
-        except Exception:
-            new_d1 = max(min_date, d2 - pd.Timedelta(days=30))
-        new_d1 = max(min_date, new_d1)
-        st.session_state.d1 = new_d1
-        st.session_state.d2 = d2
-        st.session_state.widget_key += 1
-        st.rerun()
-
-    if col_btn_all.button("📅 Toute la période", key="btn_all_dates", use_container_width=True):
-        st.session_state.d1 = min_date
-        st.session_state.d2 = max_date
-        st.session_state.widget_key += 1
-        st.rerun()
-
-    if col_btn_jmoins1.button("📅 J-1", key="btn_jmoins1", use_container_width=True):
-        d2 = st.session_state.get("d2", max_date)
-        new_d1 = max(min_date, d2 - pd.Timedelta(days=1))
-        st.session_state.d1 = new_d1
-        st.session_state.d2 = d2
-        st.session_state.widget_key += 1
-        st.rerun()
-
-with c4:
-    # Ensure d1 and d2 are proper date objects
-    d1_clean = pd.Timestamp(st.session_state.d1).date() if st.session_state.d1 else min_date
-    d2_clean = pd.Timestamp(st.session_state.d2).date() if st.session_state.d2 else max_date
-    
-    dates = st.date_input(
-        "Intervalle",
-        value=(d1_clean, d2_clean),
-        min_value=min_date,
-        max_value=max_date,
-        key=f"date_range_{st.session_state.widget_key}",
-        format="YYYY-MM-DD",
-        label_visibility="collapsed",
-    )
-    
-    if dates and len(dates) == 2:
-        if dates[0] != st.session_state.d1 or dates[1] != st.session_state.d2:
-            st.session_state.d1 = dates[0]
-            st.session_state.d2 = dates[1]
-            st.rerun()
-# sécurisation de la sélection de dates
-if isinstance(dates, (list, tuple)) and len(dates) == 2:
-    d1, d2 = dates
-    if d1 and d2:
-        if d1 > d2: d1, d2 = d2, d1
-        d1 = max(min_date, min(d1, max_date))
-        d2 = max(min_date, min(d2, max_date))
-        st.session_state.d1, st.session_state.d2 = d1, d2
-
-# FILTRAGE 
-d1_ts = pd.Timestamp(st.session_state.d1)
-d2_ts = pd.Timestamp(st.session_state.d2) + pd.Timedelta(days=1) 
+site_mask = sessions[SITE_COL].isin(st.session_state.site_sel)
 mask = site_mask & dt_start.ge(d1_ts) & dt_start.lt(d2_ts)
 sess = sessions.loc[mask].copy()
 
@@ -332,19 +347,24 @@ if "State of charge(0:good, 1:error)" in sess.columns:
     sess["is_ok"] = soc.eq(0)
 else:
     sess["is_ok"] = False
+
 # RÉSUMÉ 
 nb_sites = len(st.session_state.site_sel)
 nb_pdc_tot = sess["PDC"].nunique() if "PDC" in sess.columns else 0
-site_sel = st.session_state.site_sel
+
 st.caption(
-    f"**Période**: {d1_ts.date()} → {(d2_ts - pd.Timedelta(seconds=1)).date()} · "
-    f"**Sites**: {nb_sites}"
+    f"**Période**: {d1} → {d2} · "
+    f"**Sites**: {nb_sites} · "
+    f"**PDC**: {nb_pdc_tot}"
 )
 
 if sess.empty:
-    st.warning("Aucune donnée pour ces filtres. Essayez d’élargir l’intervalle ou de (re)sélectionner des sites.")
-#Filtre2
+    st.warning("Aucune donnée pour ces filtres. Essayez de modifier la période ou les sites sélectionnés.")
+
+# ========== FILTRES SECONDAIRES (Type/Moment d'erreur) ==========
+st.markdown("---")
 row_type, row_moment, row_avant = st.columns([1, 1, 0.7])
+
 type_options, moment_options = [], []
 if "type_erreur" in sess.columns:
     type_options = sorted(sess["type_erreur"].dropna().unique().tolist())
@@ -396,7 +416,7 @@ with row_type:
         "Type d'erreur (global)",
         options=type_options,
         key="type_sel",
-        help="Filtre global sur le type d’erreur (ex: Erreur_EVI, Erreur_DownStream)."
+        help="Filtre global sur le type d'erreur (ex: Erreur_EVI, Erreur_DownStream)."
     )
 
 with row_moment:
@@ -404,7 +424,7 @@ with row_moment:
         "Moment d'erreur",
         options=moment_options,
         key="moment_sel",
-        help="S’applique seulement aux erreurs EVI et DS"
+        help="S'applique seulement aux erreurs EVI et DS"
     )
 
 with row_avant:
@@ -453,11 +473,30 @@ nok   = total - ok
 taux_reussite = round(ok / total * 100, 2) if total else 0.0
 taux_echec    = round(nok / total * 100, 2) if total else 0.0
 
+# Préparation des variables pour le contexte
+site_sel = st.session_state.site_sel
+
+# Mise à jour du session state pour compatibilité avec les tabs
+st.session_state.d1 = d1
+st.session_state.d2 = d2
+
 context.__dict__.clear()
 context.__dict__.update({k: v for k, v in locals().items() if k != "context"})
 
 # TABS
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10= st.tabs(["📋 Générale", "🏢 Comparaison par site (Activité)", "🔌 Détails Site (par PDC)", "📈 Statistiques","📑 Projection pivot", "⚠️ Analyse tentatives multiples", "⚠️ Transactions suspectes", "🔍 Analyse Erreur Moment", "🔍 Analyse Erreur Spécifique", "⚠️Alertes"])
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
+    "📋 Générale", 
+    "🏢 Comparaison par site (Activité)", 
+    "🔌 Détails Site (par PDC)", 
+    "📈 Statistiques",
+    "📑 Projection pivot", 
+    "⚠️ Analyse tentatives multiples", 
+    "⚠️ Transactions suspectes", 
+    "🔍 Analyse Erreur Moment", 
+    "🔍 Analyse Erreur Spécifique", 
+    "⚠️ Alertes"
+])
+
 stats_all = tables.get("stats_global_all", pd.DataFrame())
 stats_ok  = tables.get("stats_global_ok",  pd.DataFrame())
 context.__dict__.update({"stats_all": stats_all, "stats_ok": stats_ok})
