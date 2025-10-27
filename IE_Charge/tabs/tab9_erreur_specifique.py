@@ -263,22 +263,72 @@ else:
             .reset_index(name="Occurrences")
         )
 
-        if "dfv" in locals() and isinstance(dfv, pd.DataFrame) and not dfv.empty and "Vehicle" in dfv.columns:
-            total_charges = (
-                dfv.groupby("Vehicle")
-                .size()
-                .reset_index(name="Total Charges")
+        dfv_local = None
+        if "dfv" in locals() and isinstance(dfv, pd.DataFrame):
+            dfv_local = dfv
+        elif "charges_mac" in locals() and isinstance(charges_mac, pd.DataFrame):
+            dfv_local = charges_mac
+
+        if isinstance(dfv_local, pd.DataFrame) and not dfv_local.empty:
+            dfv_local = dfv_local.copy()
+
+            if "Datetime start" in dfv_local.columns:
+                dfv_local["Datetime start"] = pd.to_datetime(dfv_local["Datetime start"], errors="coerce")
+
+            vehicle_col = "Vehicle" if "Vehicle" in dfv_local.columns else None
+            site_col = "Site" if "Site" in dfv_local.columns else (
+                "Name Project" if "Name Project" in dfv_local.columns else None
             )
 
-            occ_vehicle = occ_vehicle.merge(
-                total_charges,
-                on="Vehicle",
-                how="left"
-            )
+            if vehicle_col is not None:
+                veh_series = dfv_local[vehicle_col].astype(str).str.strip()
+                veh_series = veh_series.replace({
+                    "": np.nan,
+                    "nan": np.nan,
+                    "none": np.nan,
+                    "NULL": np.nan,
+                }, regex=False)
+                dfv_local[vehicle_col] = veh_series
 
+            if vehicle_col is not None:
+                mask_dfv = pd.Series(True, index=dfv_local.index)
+
+                if site_col and st.session_state.get("site_sel"):
+                    mask_dfv &= dfv_local[site_col].isin(st.session_state.site_sel)
+
+                if (
+                    "Datetime start" in dfv_local.columns
+                    and st.session_state.get("d1")
+                    and st.session_state.get("d2")
+                ):
+                    d1 = pd.Timestamp(st.session_state.get("d1"))
+                    d2 = pd.Timestamp(st.session_state.get("d2")) + pd.Timedelta(days=1)
+                    mask_dfv &= dfv_local["Datetime start"].ge(d1)
+                    mask_dfv &= dfv_local["Datetime start"].lt(d2)
+
+                dfv_filtered = dfv_local.loc[mask_dfv & dfv_local[vehicle_col].notna()].copy()
+                if not dfv_filtered.empty:
+                    dfv_filtered[vehicle_col] = dfv_filtered[vehicle_col].astype(str).str.strip()
+                    dfv_filtered = dfv_filtered[dfv_filtered[vehicle_col].str.len().gt(0)]
+                    dfv_filtered = dfv_filtered[dfv_filtered[vehicle_col].str.lower() != "unknown"]
+
+                if not dfv_filtered.empty:
+                    total_charges = (
+                        dfv_filtered.groupby(vehicle_col)
+                        .size()
+                        .reset_index(name="Total Charges")
+                    )
+
+                    occ_vehicle = occ_vehicle.merge(
+                        total_charges,
+                        on="Vehicle",
+                        how="left"
+                    )
+
+        if "Total Charges" in occ_vehicle.columns:
+            occ_vehicle["Total Charges"] = occ_vehicle["Total Charges"].fillna(0).astype(int)
             occ_vehicle["Vehicle Label"] = occ_vehicle.apply(
-                lambda row: f"{row['Vehicle']} ({int(row['Total Charges'])})"
-                if pd.notna(row["Total Charges"]) else f"{row['Vehicle']} (0)",
+                lambda row: f"{row['Vehicle']} ({row['Total Charges']})",
                 axis=1
             )
         else:
@@ -286,14 +336,18 @@ else:
 
         occ_vehicle = occ_vehicle.sort_values("Occurrences", ascending=True)
 
-        fig_vehicle = px.bar(
-            occ_vehicle,
+        bar_kwargs = dict(
+            data_frame=occ_vehicle,
             x="Occurrences",
             y="Vehicle Label",
             orientation="h",
             title="Occurrences par véhicule (avec total charges)",
-            labels={"Occurrences": "Nb d'occurrences", "Vehicle Label": "Véhicule"}
+            labels={"Occurrences": "Nb d'occurrences", "Vehicle Label": "Véhicule"},
         )
+        if "Total Charges" in occ_vehicle.columns:
+            bar_kwargs["hover_data"] = {"Occurrences": True, "Total Charges": True}
+
+        fig_vehicle = px.bar(**bar_kwargs)
         st.plotly_chart(fig_vehicle, use_container_width=True)
     else:
         st.info("Colonne 'Vehicle' absente pour compter les occurrences par véhicule.")
