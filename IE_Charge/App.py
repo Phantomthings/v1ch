@@ -194,8 +194,20 @@ if "limit_sites_to_20" not in st.session_state:
     st.session_state.limit_sites_to_20 = False
 
 if st.session_state.limit_sites_to_20:
-    if len(st.session_state.site_sel) > 20:
-        st.session_state.site_sel = st.session_state.site_sel[:20]
+    top_sites = []
+    if not sessions.empty and SITE_COL in sessions.columns:
+        counts = (
+            sessions[SITE_COL]
+            .dropna()
+            .value_counts()
+        )
+        top_sites = [site for site in counts.index if site in sites][:20]
+
+    if not top_sites and len(st.session_state.site_sel) > 20:
+        top_sites = st.session_state.site_sel[:20]
+
+    if top_sites:
+        st.session_state.site_sel = top_sites
     st.session_state.limit_sites_to_20 = False
 
 # Préconversion des dates 
