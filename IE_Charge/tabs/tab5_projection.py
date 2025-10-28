@@ -25,135 +25,149 @@ else:
     # filtre moments 
     if "moment_sel" in st.session_state and st.session_state.moment_sel:
         evi_f = evi_f[evi_f["moment"].isin(st.session_state.moment_sel)]
-    site_list = [] if evi_f.empty else sorted(evi_f["Site"].unique())
+    site_options = [] if evi_f.empty else sorted(evi_f["Site"].dropna().unique())
 
-    if not site_list:
+    if not site_options:
         st.info("Aucune combinaison sur ce périmètre (après filtres).")
-    
-    for site in site_list:
-        st.markdown(f"### 📍 {site}")
-        hide_zero = st.checkbox("Masquer colonnes vides (0)", key=f"hide_zeros_{site}")
 
-        evi_site = evi_f[evi_f["Site"] == site].copy()
-        evi_site["step_num"] = pd.to_numeric(evi_site["step_num"], errors="coerce").fillna(0).astype(int)
-        evi_site["code_num"] = pd.to_numeric(evi_site["code_num"], errors="coerce").fillna(0).astype(int)
+    else:
+        default_site = st.session_state.get("tab5_projection_site")
+        if default_site not in site_options:
+            default_site = site_options[0]
 
-        if "PDC" in evi_site.columns:
-            g_pdc = evi_site.groupby(["PDC", "step_num", "code_num"]).size().rename("Nb").reset_index()
-            g_tot = evi_site.groupby(["step_num", "code_num"]).size().rename("Nb").reset_index()
-            g_tot["PDC"] = "__TOTAL__"
-            full = pd.concat([g_tot, g_pdc], ignore_index=True)
-
-            pv = full.pivot_table(
-                index="PDC",
-                columns=["step_num", "code_num"],
-                values="Nb",
-                fill_value=0,
-                aggfunc="sum",
-            )
-
-            steps = sorted({c[0] for c in pv.columns})
-            codes = sorted({c[1] for c in pv.columns})
-            wanted = pd.MultiIndex.from_product(
-                [steps, codes],
-                names=["Moments (ligne 1)", "Codes (ligne 2)"]
-            )
-            pv = pv.reindex(columns=wanted, fill_value=0)
-
-            pdcs = sorted(pv.index.tolist(), key=str)
-            if "__TOTAL__" in pdcs:
-                pdcs.remove("__TOTAL__")
-                pdcs = ["__TOTAL__"] + pdcs
-            pv = pv.reindex(pdcs)
-
-            df_disp = pv.reset_index()
-            df_disp["Site / PDC"] = np.where(
-                df_disp["PDC"].eq("__TOTAL__"),
-                f"{site} (TOTAL)",
-                "   " + df_disp["PDC"].astype(str)
-            )
-            df_disp = df_disp.drop(columns=["PDC"])
-        else:
-            g_site = evi_site.groupby(["step_num", "code_num"]).size().rename("Nb").reset_index()
-            pv = g_site.pivot_table(
-                index=pd.Index([site], name="Site"),
-                columns=["step_num", "code_num"],
-                values="Nb",
-                fill_value=0,
-                aggfunc="sum",
-            )
-
-            steps = sorted({c[0] for c in pv.columns})
-            codes = sorted({c[1] for c in pv.columns})
-            wanted = pd.MultiIndex.from_product(
-                [steps, codes],
-                names=["Moments (ligne 1)", "Codes (ligne 2)"]
-            )
-            pv = pv.reindex(columns=wanted, fill_value=0)
-
-            df_disp = pv.reset_index()
-            df_disp["Site / PDC"] = f"{site} (TOTAL)"
-
-        # Réorganisation colonnes
-        cols = df_disp.columns
-        disp_col = ("Site / PDC", "") if isinstance(cols, pd.MultiIndex) and ("Site / PDC", "") in cols else "Site / PDC"
-        if isinstance(cols, pd.MultiIndex):
-            value_cols = [c for c in cols if c != disp_col]
-            df_disp = df_disp.loc[:, [disp_col] + value_cols]
-        else:
-            value_cols = [c for c in cols if c != "Site / PDC"]
-            df_disp = df_disp[["Site / PDC"] + value_cols]
-
-        # Calcul total par ligne
-        _total_col = ("∑", "Total") if (len(value_cols) and isinstance(value_cols[0], tuple)) else "∑ Total"
-        _numeric_all = df_disp[value_cols].apply(pd.to_numeric, errors="coerce").fillna(0)
-        df_disp[_total_col] = _numeric_all.sum(axis=1)
-
-        # Masquage des colonnes avec uniquement des zéros
-        if hide_zero:
-            col_sums = _numeric_all.sum(axis=0)
-            value_cols = [c for c in value_cols if col_sums[c] > 0]
-
-        # Calcul total global
-        _numeric_base = df_disp[df_disp[disp_col].astype(str).str.startswith("   ")].copy()
-        if _numeric_base.empty:
-            _numeric_base = df_disp.copy()
-        _col_totals = _numeric_base[value_cols].apply(pd.to_numeric, errors="coerce").fillna(0).sum()
-
-        _sum_dict = {disp_col: "TOTAL GÉNÉRAL"}
-        _sum_dict.update({col: _col_totals[col] for col in value_cols})
-        _sum_dict[_total_col] = float(_col_totals.sum())
-        _sum_row = pd.DataFrame([_sum_dict], columns=[disp_col] + value_cols + [_total_col])
-
-        df_disp = pd.concat([df_disp, _sum_row], ignore_index=True)
-
-        final_cols = [disp_col] + value_cols + [_total_col]
-
-        def _cell_color(v):
-            try:
-                x = float(v)
-            except:
-                return ""
-            if x == 0: return "background-color: #ffffff;"
-            elif x <= 2: return "background-color: #E8F1FB;"
-            elif x <= 6: return "background-color: #CFE3F7;"
-            elif x <= 15: return "background-color: #A9CFF2;"
-            elif x <= 25: return "background-color: #7DB5EA;"
-            elif x <= 50: return "background-color: #4F97D9; color: white;"
-            elif x <= 100: return "background-color: #2F6FB7; color: white;"
-            else: return "background-color: #1F4F8F; color: white;"
-
-        styled = (
-            df_disp[final_cols]
-            .style
-            .applymap(_cell_color, subset=value_cols)
-            .format(precision=0, na_rep="")
-            .set_table_styles([
-                {"selector": "th.col_heading.level0", "props": [("text-align", "center")]},
-                {"selector": "th.col_heading.level1", "props": [("text-align", "center")]},
-            ])
+        selected_index = site_options.index(default_site) if default_site in site_options else 0
+        selected_site = st.selectbox(
+            "Site (projection)",
+            options=site_options,
+            index=selected_index,
+            key="tab5_projection_site",
+            help="Sélectionnez un seul site pour l'analyse de projection.",
         )
-        st.dataframe(styled, use_container_width=True)
+
+        for site in [selected_site]:
+            st.markdown(f"### 📍 {site}")
+            hide_zero = st.checkbox("Masquer colonnes vides (0)", key=f"hide_zeros_{site}")
+
+            evi_site = evi_f[evi_f["Site"] == site].copy()
+            evi_site["step_num"] = pd.to_numeric(evi_site["step_num"], errors="coerce").fillna(0).astype(int)
+            evi_site["code_num"] = pd.to_numeric(evi_site["code_num"], errors="coerce").fillna(0).astype(int)
+
+            if "PDC" in evi_site.columns:
+                g_pdc = evi_site.groupby(["PDC", "step_num", "code_num"]).size().rename("Nb").reset_index()
+                g_tot = evi_site.groupby(["step_num", "code_num"]).size().rename("Nb").reset_index()
+                g_tot["PDC"] = "__TOTAL__"
+                full = pd.concat([g_tot, g_pdc], ignore_index=True)
+
+                pv = full.pivot_table(
+                    index="PDC",
+                    columns=["step_num", "code_num"],
+                    values="Nb",
+                    fill_value=0,
+                    aggfunc="sum",
+                )
+
+                steps = sorted({c[0] for c in pv.columns})
+                codes = sorted({c[1] for c in pv.columns})
+                wanted = pd.MultiIndex.from_product(
+                    [steps, codes],
+                    names=["Moments (ligne 1)", "Codes (ligne 2)"]
+                )
+                pv = pv.reindex(columns=wanted, fill_value=0)
+
+                pdcs = sorted(pv.index.tolist(), key=str)
+                if "__TOTAL__" in pdcs:
+                    pdcs.remove("__TOTAL__")
+                    pdcs = ["__TOTAL__"] + pdcs
+                pv = pv.reindex(pdcs)
+
+                df_disp = pv.reset_index()
+                df_disp["Site / PDC"] = np.where(
+                    df_disp["PDC"].eq("__TOTAL__"),
+                    f"{site} (TOTAL)",
+                    "   " + df_disp["PDC"].astype(str)
+                )
+                df_disp = df_disp.drop(columns=["PDC"])
+            else:
+                g_site = evi_site.groupby(["step_num", "code_num"]).size().rename("Nb").reset_index()
+                pv = g_site.pivot_table(
+                    index=pd.Index([site], name="Site"),
+                    columns=["step_num", "code_num"],
+                    values="Nb",
+                    fill_value=0,
+                    aggfunc="sum",
+                )
+
+                steps = sorted({c[0] for c in pv.columns})
+                codes = sorted({c[1] for c in pv.columns})
+                wanted = pd.MultiIndex.from_product(
+                    [steps, codes],
+                    names=["Moments (ligne 1)", "Codes (ligne 2)"]
+                )
+                pv = pv.reindex(columns=wanted, fill_value=0)
+
+                df_disp = pv.reset_index()
+                df_disp["Site / PDC"] = f"{site} (TOTAL)"
+
+            # Réorganisation colonnes
+            cols = df_disp.columns
+            disp_col = ("Site / PDC", "") if isinstance(cols, pd.MultiIndex) and ("Site / PDC", "") in cols else "Site / PDC"
+            if isinstance(cols, pd.MultiIndex):
+                value_cols = [c for c in cols if c != disp_col]
+                df_disp = df_disp.loc[:, [disp_col] + value_cols]
+            else:
+                value_cols = [c for c in cols if c != "Site / PDC"]
+                df_disp = df_disp[["Site / PDC"] + value_cols]
+
+            # Calcul total par ligne
+            _total_col = ("∑", "Total") if (len(value_cols) and isinstance(value_cols[0], tuple)) else "∑ Total"
+            _numeric_all = df_disp[value_cols].apply(pd.to_numeric, errors="coerce").fillna(0)
+            df_disp[_total_col] = _numeric_all.sum(axis=1)
+
+            # Masquage des colonnes avec uniquement des zéros
+            if hide_zero:
+                col_sums = _numeric_all.sum(axis=0)
+                value_cols = [c for c in value_cols if col_sums[c] > 0]
+
+            # Calcul total global
+            _numeric_base = df_disp[df_disp[disp_col].astype(str).str.startswith("   ")].copy()
+            if _numeric_base.empty:
+                _numeric_base = df_disp.copy()
+            _col_totals = _numeric_base[value_cols].apply(pd.to_numeric, errors="coerce").fillna(0).sum()
+
+            _sum_dict = {disp_col: "TOTAL GÉNÉRAL"}
+            _sum_dict.update({col: _col_totals[col] for col in value_cols})
+            _sum_dict[_total_col] = float(_col_totals.sum())
+            _sum_row = pd.DataFrame([_sum_dict], columns=[disp_col] + value_cols + [_total_col])
+
+            df_disp = pd.concat([df_disp, _sum_row], ignore_index=True)
+
+            final_cols = [disp_col] + value_cols + [_total_col]
+
+            def _cell_color(v):
+                try:
+                    x = float(v)
+                except:
+                    return ""
+                if x == 0: return "background-color: #ffffff;"
+                elif x <= 2: return "background-color: #E8F1FB;"
+                elif x <= 6: return "background-color: #CFE3F7;"
+                elif x <= 15: return "background-color: #A9CFF2;"
+                elif x <= 25: return "background-color: #7DB5EA;"
+                elif x <= 50: return "background-color: #4F97D9; color: white;"
+                elif x <= 100: return "background-color: #2F6FB7; color: white;"
+                else: return "background-color: #1F4F8F; color: white;"
+
+            styled = (
+                df_disp[final_cols]
+                .style
+                .applymap(_cell_color, subset=value_cols)
+                .format(precision=0, na_rep="")
+                .set_table_styles([
+                    {"selector": "th.col_heading.level0", "props": [("text-align", "center")]},
+                    {"selector": "th.col_heading.level1", "props": [("text-align", "center")]},
+                ])
+            )
+            st.dataframe(styled, use_container_width=True)
     st.markdown(\"\"\"
     **Légende (occurrences)**  
     <span style="display:inline-block;width:14px;height:14px;background:#ffffff;border:1px solid #ddd;"></span> 0  
