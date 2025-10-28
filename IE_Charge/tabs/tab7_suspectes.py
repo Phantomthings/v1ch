@@ -14,7 +14,32 @@ if suspicious.empty:
 else:
     df_s = suspicious.copy()
     if "Site" in df_s.columns:
-        df_s = df_s[df_s["Site"].isin(st.session_state.site_sel)]
+        site_options = st.session_state.get("site_sel", [])
+        if not site_options:
+            site_options = sorted(df_s["Site"].dropna().unique().tolist())
+        if site_options:
+            default_site = st.session_state.get("tab7_site_single")
+            if default_site not in site_options:
+                default_site = site_options[0]
+
+            if len(site_options) == 1:
+                selected_site = site_options[0]
+                st.session_state["tab7_site_single"] = selected_site
+                st.caption(f"Site sélectionné : {selected_site}")
+            else:
+                selected_site = st.selectbox(
+                    "Sélection du site",
+                    options=site_options,
+                    index=site_options.index(default_site) if default_site in site_options else 0,
+                    key="tab7_site_single",
+                    help="Choisissez un site. Le tableau affiche les transactions suspectes pour un seul site.",
+                )
+
+            selected_site = st.session_state.get("tab7_site_single", default_site)
+            df_s = df_s[df_s["Site"] == selected_site]
+        else:
+            st.info("Aucun site disponible pour cette vue.")
+            df_s = df_s.iloc[0:0]
 
     if "Datetime start" in df_s.columns:
         ds = pd.to_datetime(df_s["Datetime start"], errors="coerce")
