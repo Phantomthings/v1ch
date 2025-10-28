@@ -16,23 +16,66 @@ if multi_src.empty:
 else:
     dfm = multi_src.copy()
     dfm["Date_heure"] = pd.to_datetime(dfm["Date_heure"], errors="coerce")
-    mask = dfm["Site"].isin(st.session_state.site_sel) & dfm["Date_heure"].between(d1_ts, d2_ts)
-    dfm = dfm.loc[mask].copy().sort_values(["Date_heure","Site","tentatives"], ascending=[True,True,False])
-    if dfm.empty:
-        st.success("Aucun utilisateur n’a essayé plusieurs fois dans la même heure sur ce périmètre.")
+
+    available_sites = sorted(dfm["Site"].dropna().unique().tolist())
+    site_options = [site for site in st.session_state.site_sel if site in available_sites]
+    if not site_options:
+        site_options = available_sites
+
+    if not site_options:
+        st.info("Aucun site disponible pour cette analyse avec les filtres actuels.")
     else:
-        def _id_links(cell: str) -> str:
-            if not isinstance(cell, str) or cell.strip() == "":
-                return ""
-            ids = [x.strip() for x in cell.split(",") if x.strip()]
-            return " · ".join(f'<a href="{BASE_CHARGE_URL}{iid}" target="_blank">{iid}</a>' for iid in ids)
-        dfm["ID(s)"] = dfm["ID(s)"].astype(str).apply(_id_links)
-        show_cols = ["Site","Heure","MAC", "Vehicle","tentatives","PDC(s)","1ère tentative","Dernière tentative","ID(s)"]
-        soc_cols  = [c for c in ["SOC start min","SOC start max","SOC end min","SOC end max"] if c in dfm.columns]
-        show_cols += soc_cols
-        out = dfm[show_cols].copy()
-        out.insert(0, "#", range(1, len(out)+1))
-        st.markdown(out.to_html(index=False, escape=False, border=0), unsafe_allow_html=True)
+        site_key = "tab6_selected_site"
+        if st.session_state.get(site_key) not in site_options:
+            st.session_state[site_key] = site_options[0]
+
+        selected_site = st.selectbox(
+            "Site analysé",
+            options=site_options,
+            key=site_key,
+            help="Sélectionnez un seul site pour l'analyse des tentatives multiples.",
+        )
+
+        mask = dfm["Site"].eq(selected_site) & dfm["Date_heure"].between(d1_ts, d2_ts)
+        dfm = (
+            dfm
+            .loc[mask]
+            .copy()
+            .sort_values(["Date_heure", "Site", "tentatives"], ascending=[True, True, False])
+        )
+        if dfm.empty:
+            st.success("Aucun utilisateur n’a essayé plusieurs fois dans la même heure sur ce périmètre.")
+        else:
+            def _id_links(cell: str) -> str:
+                if not isinstance(cell, str) or cell.strip() == "":
+                    return ""
+                ids = [x.strip() for x in cell.split(",") if x.strip()]
+                return " · ".join(
+                    f'<a href="{BASE_CHARGE_URL}{iid}" target="_blank">{iid}</a>'
+                    for iid in ids
+                )
+
+            dfm["ID(s)"] = dfm["ID(s)"].astype(str).apply(_id_links)
+            show_cols = [
+                "Site",
+                "Heure",
+                "MAC",
+                "Vehicle",
+                "tentatives",
+                "PDC(s)",
+                "1ère tentative",
+                "Dernière tentative",
+                "ID(s)",
+            ]
+            soc_cols = [
+                c
+                for c in ["SOC start min", "SOC start max", "SOC end min", "SOC end max"]
+                if c in dfm.columns
+            ]
+            show_cols += soc_cols
+            out = dfm[show_cols].copy()
+            out.insert(0, "#", range(1, len(out) + 1))
+            st.markdown(out.to_html(index=False, escape=False, border=0), unsafe_allow_html=True)
 
 """
 
