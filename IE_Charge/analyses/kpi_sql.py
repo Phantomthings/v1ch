@@ -300,14 +300,45 @@ def build_durations_daily(df: pd.DataFrame) -> dict:
     ok["_day"] = pd.to_datetime(ok["Datetime start"], errors="coerce").dt.floor("D")
     ok["dur_min"] = dur_min.loc[ok.index].fillna(0)
 
+    base = df.copy()
+    base["_day"] = pd.to_datetime(base.get("Datetime start"), errors="coerce").dt.floor("D")
+    base = base[base["_day"].notna()].copy()
+
     dur_site_daily = (
-        ok.groupby([site_col, "_day"], dropna=False)["dur_min"].sum().reset_index().rename(columns={site_col: "Site", "_day": "day"})
+        ok.groupby([site_col, "_day"], dropna=False)["dur_min"].sum().reset_index()
+        if not ok.empty
+        else pd.DataFrame(columns=[site_col, "_day", "dur_min"])
     )
+
+    if not base.empty:
+        all_site_days = base[[site_col, "_day"]].drop_duplicates()
+        dur_site_daily = all_site_days.merge(
+            dur_site_daily,
+            on=[site_col, "_day"],
+            how="left",
+        )
+    dur_site_daily = dur_site_daily.rename(columns={site_col: "Site", "_day": "day"})
+    dur_site_daily["dur_min"] = dur_site_daily["dur_min"].fillna(0)
 
     if "PDC" in ok.columns:
         dur_pdc_daily = (
-            ok.groupby([site_col, "PDC", "_day"], dropna=False)["dur_min"].sum().reset_index().rename(columns={site_col: "Site", "_day": "day"})
+            ok.groupby([site_col, "PDC", "_day"], dropna=False)["dur_min"].sum().reset_index()
+            if not ok.empty
+            else pd.DataFrame(columns=[site_col, "PDC", "_day", "dur_min"])
         )
+        if "PDC" in base.columns:
+            all_site_pdc_days = (
+                base[[site_col, "PDC", "_day"]]
+                .dropna(subset=["_day"])
+                .drop_duplicates()
+            )
+            dur_pdc_daily = all_site_pdc_days.merge(
+                dur_pdc_daily,
+                on=[site_col, "PDC", "_day"],
+                how="left",
+            )
+        dur_pdc_daily = dur_pdc_daily.rename(columns={site_col: "Site", "_day": "day"})
+        dur_pdc_daily["dur_min"] = dur_pdc_daily["dur_min"].fillna(0)
     else:
         dur_pdc_daily = pd.DataFrame(columns=["Site", "PDC", "day", "dur_min"])
 
