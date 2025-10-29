@@ -1,5 +1,6 @@
 from pathlib import Path
 from datetime import datetime, timedelta
+import hashlib
 
 import numpy as np
 import pandas as pd
@@ -51,6 +52,8 @@ TABLES_TO_SAVE = {
     "evi_combo_by_site",
 }
 
+HASH_SKIP_TABLES = {"sessions", "suspicious_under_1kwh"}
+
 # ✅ CORRECTION DES CLÉS UNIQUES
 # Elles doivent correspondre EXACTEMENT aux colonnes de GROUP BY dans chaque fonction
 UNIQUE_KEYS = {
@@ -96,6 +99,38 @@ SITE_MAP = {
     "7833": "Pontfaverger",
     "001": "Baud", "003": "Maurs", "050": "Mezidon", "051": "Derval", "054": "Campagne", "057": "Mailly le Chateau", "062": "Winnezeele", "063": "Diges", "065": "Vernouillet", "067": "Orbec", "071": "St Renan", "079": "Molompize", "081": "Carquefou", "083": "Vaupillon", "085": "Pleumartin", "086": "Caumont sur Aure", "087": "Getigne", "088": "Chinon", "091": "La Roche sur Yon", "093": "Aubigne sur Layon", "094": "Bonvillet", "096": "Rambervillers", "099": "Blere", "100": "Plouasne", "108": "Champniers", "112": "Nissan Lez Enserune", "114": "Combourg", "115": "Vimoutiers", "118": "Beaumont de Lomagne", "121": "Sueves", "122": "Maen Roch", "124": "St Leon sur L Isle", "125": "Mirecourt", "128": "La Voge les Bains", "130": "Amanvillers", "131": "Guerlesquin", "134": "Guerande", "135": "Riscle", "139": "Avrille", "142": "Domfront", "149": "Couesmes", "156": "Ste Catherine", "160": "Andel", "161": "Chazey Bons", "163": "Lauzerte", "165": "Trie la ville", "166": "Hambach", "167": "Beaugency", "168": "Carcassonne", "174": "Sable sur Sarthe", "179": "Taden", "184": "Rue", "185": "Quevilloncourt", "187": "St Victor de Morestel", "191": "St Hilaire du Harcouet", "196": "Hémonstoir", "197": "Amily", "199": "Henrichemont", "203": "Couleuvre", "208": "St Pierre le Moutier 2", "209": "Bourbon L Archambaut", "210": "Brou", "211": "Neulise", "214": "St Jean le vieux", "217": "Periers", "218": "Quievrecourt", "221": "Chazelle sur Lyon", "222": "Montverdun", "223": "Dormans", "227": "Glonville 2", "230": "Montalieu Vercieu", "234": "Nesle Normandeuse", "240": "Noyal Pontivy", "246": "Vitre 2", "247": "St Amour", "250": "Dourdan", "254": "Roanne", "259": "Plufur", "266": "Boinville en Mantois", "269": "Loche", "272": "Bonnieres sur Seine", "273": "Piffonds", "274": "St Benin d Azy", "276": "Niort St Florent", "281": "Chauffailles", "282": "St Vincent d Autejac", "283": "Culhat", "289": "Loireauxence", "292": "Reuil", "301": "Coteaux sur Loire", "304": "Le Mans 2", "311": "Chantrigne", "313": "St Thelo", "314": "St Pierre la cour", "317": "Nievroz", "318": "Val Revermont", "320": "Mondoubleau", "321": "Kernoues", "322": "Yvetot Bocage", "324": "Douchy Montcorbon", "328": "Sully sur Loire B", "330": "Vincey", "336": "Ville en Vermois", "337": "Virandeville", "339": "Reims", "340": "Reims B", "342": "Charge", "343": "St Benoit la Foret", "349": "Dombrot le Sec", "352": "Riorges", "362": "Montauban B", "365": "Dogneville 2", "366": "Brieulles sur meuse", "368": "Melesse", "372": "Pujaudran", "374": "Plouye", "376": "Dampierre en Burly", "381": "Dommartin les Remiremont", "382": "St Igny de Roche", "384": "Guengat", "386": "Epeigne sur deme 2", "388": "Maiche", "391": "Wittenheim", "394": "Lacres", "395": "Trelivan", "397": "Vironvay", "399": "Abbeville les Conflans", "401": "Orgeval", "402": "Mantes la Ville", "403": "Liny devant Dun B", "412": "St Leger sur Roanne", "414": "Mairy Mainville",
 }
+
+
+def _normalize_for_hash(value) -> str:
+    """Convertit une valeur en chaîne stable pour la génération de hash."""
+    if pd.isna(value):
+        return ""
+
+    if isinstance(value, pd.Timestamp):
+        # On supprime l'information de fuseau pour garantir la stabilité
+        try:
+            value = value.tz_localize(None)
+        except (TypeError, AttributeError):
+            pass
+        return value.strftime("%Y-%m-%d %H:%M:%S")
+
+    if isinstance(value, datetime):
+        return value.replace(tzinfo=None).strftime("%Y-%m-%d %H:%M:%S")
+
+    text = str(value).strip()
+    return "" if text.lower() == "nat" else text
+
+
+def _append_hash_column(df: pd.DataFrame, columns: list[str], column_name: str = "HASH_CLES") -> pd.DataFrame:
+    """Ajoute une colonne de hash basée sur les colonnes fournies."""
+    if not columns:
+        return df
+
+    df.drop(columns=[column_name], inplace=True, errors="ignore")
+    normalized = df[columns].applymap(_normalize_for_hash)
+    concatenated = normalized.apply(lambda row: "||".join(row.values.tolist()), axis=1)
+    df[column_name] = concatenated.apply(lambda val: hashlib.sha256(val.encode("utf-8")).hexdigest())
+    return df
 
 
 def get_last_update_date(table_name: str) -> datetime:
@@ -785,7 +820,7 @@ def save_to_indicator(table_dict: dict, incremental: bool = True):
             print(f"❌ Table non trouvée ou erreur chargement : {table_name} → {e}")
             continue
 
-        df_cleaned = df.where(pd.notna(df), None)
+        df_cleaned = df.where(pd.notna(df), None).copy()
 
         unique_cols = UNIQUE_KEYS.get(table_name)
         if unique_cols:
@@ -822,6 +857,16 @@ def save_to_indicator(table_dict: dict, incremental: bool = True):
                         f"ℹ️  {dropped} doublons supprimés avant insertion dans {schema_name}.{table_name} "
                         f"(clé unique : {', '.join(unique_cols)}) | Vrais doublons : {true_duplicates}"
                     )
+
+        should_add_hash = name not in HASH_SKIP_TABLES
+        if should_add_hash:
+            if unique_cols and not any(col not in df_cleaned.columns for col in unique_cols):
+                df_cleaned = _append_hash_column(df_cleaned, unique_cols)
+            else:
+                print(
+                    f"⚠️ Impossible d'ajouter HASH_CLES pour {schema_name}.{table_name} : "
+                    "colonnes de clé manquantes"
+                )
 
         attempted_rows = len(df_cleaned)
 
