@@ -68,6 +68,16 @@ else:
 
     ok = sess.loc[ok_mask].copy()
 
+    energy_all_series = pd.to_numeric(
+        sess.get("Energy (Kwh)", pd.Series(index=sess.index, dtype=float)),
+        errors="coerce",
+    )
+    e_total_all = (
+        round(float(energy_all_series.sum(skipna=True)), 3)
+        if energy_all_series.notna().any()
+        else 0
+    )
+
     # Masque pour les données d'énergie
     if "moment" in sess.columns:
         moment_all = sess["moment"].astype(str).str.strip().str.casefold()
@@ -79,8 +89,7 @@ else:
     # Calculs pour l'énergie
     energy_df = sess.loc[energy_mask].copy()
     energy_series = pd.to_numeric(energy_df.get("Energy (Kwh)", pd.Series(index=energy_df.index, dtype=float)), errors="coerce")
-    
-    e_total = round(float(energy_series.sum(skipna=True)), 3) if energy_series.notna().any() else 0
+
     e_mean  = round(float(energy_series.mean(skipna=True)), 3) if energy_series.notna().any() else 0
     e_max_i = energy_series.idxmax() if energy_series.notna().any() else np.nan
     e_max_v = (round(float(energy_series.loc[e_max_i]), 3) if e_max_i==e_max_i else "—")
@@ -95,10 +104,10 @@ else:
         energy_lieu_of = lambda x: "—"
 
     st.divider()
-    st.markdown('#### ⚡ Énergie <span class="kpi-tag">OK only</span>', unsafe_allow_html=True)
+    st.markdown('#### ⚡ Énergie <span class="kpi-tag">Total : tous statuts</span> <span class="kpi-tag">Moy./Max : OK only</span>', unsafe_allow_html=True)
     c1, c2, c3 = st.columns(3)
     with c1:
-        card("Total (kWh)", f"{e_total}")
+        card("Total (kWh)", f"{e_total_all}", "Tous statuts")
     with c2:
         card("Moyenne (kWh)", f"{e_mean}")
     with c3:
@@ -181,16 +190,10 @@ else:
 
         # Durées
         d_mean = round(float(dur_min.mean(skipna=True)), 1) if dur_min.notna().any() else 0
-        d_max_i = dur_min.idxmax() if dur_min.notna().any() else np.nan
-        d_max_v = (round(float(dur_min.loc[d_max_i]), 1) if d_max_i==d_max_i else "—")
 
         st.divider()
         st.markdown('#### ⏱️ Durées de charge (min) <span class="kpi-tag">OK only</span>', unsafe_allow_html=True)
-        c1, c2 = st.columns(2)
-        with c1:
-            card("Moyenne (min)", f"{d_mean}")
-        with c2:
-            card("Max (min)", f"{d_max_v}", f"{date_of(d_max_i)} — {lieu_of(d_max_i)}")
+        card("Moyenne (min)", f"{d_mean}")
 
         # Charge par jour
         st.divider()
