@@ -780,10 +780,21 @@ def save_to_indicator(table_dict: dict, incremental: bool = True):
                 else:
                     stmt = insert(table)
                 
-                conn.execute(stmt, df_cleaned.to_dict(orient="records"))
-                print(
-                    f"✅ Table {'mise à jour' if incremental else 'insérée'} : {schema_name}.{table_name} ({len(df)} lignes)"
+                result = conn.execute(stmt, df_cleaned.to_dict(orient="records"))
+                affected_rows = getattr(result, "rowcount", None)
+
+                if affected_rows is None or affected_rows < 0:
+                    affected_rows = len(df)
+
+                message = (
+                    f"✅ Table {'mise à jour' if incremental else 'insérée'} : "
+                    f"{schema_name}.{table_name} ({affected_rows} lignes)"
                 )
+
+                if incremental and affected_rows != len(df):
+                    message += f" sur {len(df)} tentatives"
+
+                print(message)
             except Exception as e:
                 print(f"❌ Erreur insertion pour {table_name} → {e}")
 
