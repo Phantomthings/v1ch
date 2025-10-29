@@ -120,6 +120,7 @@ else:
 
             # Calcul total par ligne
             _total_col = ("∑", "Total") if (len(value_cols) and isinstance(value_cols[0], tuple)) else "∑ Total"
+            _total_pct_col = ("∑", "%") if isinstance(_total_col, tuple) else "∑ %"
             _numeric_all = df_disp[value_cols].apply(pd.to_numeric, errors="coerce").fillna(0)
             df_disp[_total_col] = _numeric_all.sum(axis=1)
 
@@ -136,12 +137,20 @@ else:
 
             _sum_dict = {disp_col: "TOTAL GÉNÉRAL"}
             _sum_dict.update({col: _col_totals[col] for col in value_cols})
-            _sum_dict[_total_col] = float(_col_totals.sum())
-            _sum_row = pd.DataFrame([_sum_dict], columns=[disp_col] + value_cols + [_total_col])
+            total_general_value = float(_col_totals.sum())
+            _sum_dict[_total_col] = total_general_value
+            _sum_dict[_total_pct_col] = 100.0 if total_general_value else 0.0
+            _sum_row = pd.DataFrame([_sum_dict], columns=[disp_col] + value_cols + [_total_col, _total_pct_col])
 
             df_disp = pd.concat([df_disp, _sum_row], ignore_index=True)
 
-            final_cols = [disp_col] + value_cols + [_total_col]
+            if total_general_value:
+                df_disp[_total_pct_col] = (df_disp[_total_col] / total_general_value * 100).round(1)
+            else:
+                df_disp[_total_pct_col] = 0.0
+            df_disp.loc[df_disp[disp_col] == "TOTAL GÉNÉRAL", _total_pct_col] = 100.0 if total_general_value else 0.0
+
+            final_cols = [disp_col] + value_cols + [_total_col, _total_pct_col]
 
             def _cell_color(v):
                 try:
@@ -162,6 +171,9 @@ else:
                 .style
                 .applymap(_cell_color, subset=value_cols)
                 .format(precision=0, na_rep="")
+                .format({
+                    _total_pct_col: "{:.1f}%"
+                })
                 .set_table_styles([
                     {"selector": "th.col_heading.level0", "props": [("text-align", "center")]},
                     {"selector": "th.col_heading.level1", "props": [("text-align", "center")]},
