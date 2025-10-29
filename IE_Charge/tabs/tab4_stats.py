@@ -37,17 +37,9 @@ def card(title, value, sub=""):
 if "is_ok" not in sess.columns:
     st.info("Colonne is_ok absente.")
 else:
-    is_ok_series = sess["is_ok"]
-    ok_mask = pd.Series(is_ok_series, index=sess.index).fillna(False).astype(bool)
-    if "type_erreur" in sess.columns:
-        type_vals = sess["type_erreur"].astype(str).str.strip()
-        fin_charge_mask = type_vals.eq("Fin de charge")
-        zero_mask = pd.Series(is_ok_series, index=sess.index).fillna(False) == 0
-        ok_mask = ok_mask | (zero_mask & fin_charge_mask)
-
-    ok = sess.loc[ok_mask].copy()
+    ok = sess[sess["is_ok"]].copy()
     if ok.empty:
-        st.warning("Aucune charge OK ou Fin de charge dans ce périmètre.")
+        st.warning("Aucune charge OK dans ce périmètre.")
     else:
         dt_s   = pd.to_datetime(ok.get("Datetime start"), errors="coerce")
         dt_e   = pd.to_datetime(ok.get("Datetime end"), errors="coerce")
@@ -70,20 +62,35 @@ else:
             pdc  = str(ok.loc[idx].get("PDC", "—"))
             return f"{site} — PDC {pdc}"
 
+        def idxmin_thresh(series: pd.Series, thr: float):
+            s = series.where(series >= thr)
+            return s.idxmin() if s.notna().any() else np.nan
+
+        # seuils minima à ignorer
+        THR_ENERGY = 4.0
+        THR_PMEAN  = 4.0
+        THR_PMAX   = 4.0
+
         # ÉNERGIE
         e_total = round(float(energy.sum(skipna=True)), 3) if energy.notna().any() else 0
         e_mean  = round(float(energy.mean(skipna=True)), 3) if energy.notna().any() else 0
+        e_min_i = idxmin_thresh(energy, THR_ENERGY)
         e_max_i = energy.idxmax() if energy.notna().any() else np.nan
+        e_min_v = (round(float(energy.loc[e_min_i]), 3) if e_min_i==e_min_i else "—")
         e_max_v = (round(float(energy.loc[e_max_i]), 3) if e_max_i==e_max_i else "—")
 
         # Pmean
         pm_mean = round(float(pmean.mean(skipna=True)), 3) if pmean.notna().any() else 0
+        pm_min_i = idxmin_thresh(pmean, THR_PMEAN)
         pm_max_i = pmean.idxmax() if pmean.notna().any() else np.nan
+        pm_min_v = (round(float(pmean.loc[pm_min_i]), 3) if pm_min_i==pm_min_i else "—")
         pm_max_v = (round(float(pmean.loc[pm_max_i]), 3) if pm_max_i==pm_max_i else "—")
 
         # Pmax
         px_mean = round(float(pmax.mean(skipna=True)), 3) if pmax.notna().any() else 0
+        px_min_i = idxmin_thresh(pmax, THR_PMAX)
         px_max_i = pmax.idxmax() if pmax.notna().any() else np.nan
+        px_min_v = (round(float(pmax.loc[px_min_i]), 3) if px_min_i==px_min_i else "—")
         px_max_v = (round(float(pmax.loc[px_max_i]), 3) if px_max_i==px_max_i else "—")
 
         # SOC
@@ -92,7 +99,9 @@ else:
 
         # Durées
         d_mean = round(float(dur_min.mean(skipna=True)), 1) if dur_min.notna().any() else 0
+        d_min_i = idxmin_thresh(dur_min, 1.0) 
         d_max_i = dur_min.idxmax() if dur_min.notna().any() else np.nan
+        d_min_v = (round(float(dur_min.loc[d_min_i]), 1) if d_min_i==d_min_i else "—")
         d_max_v = (round(float(dur_min.loc[d_max_i]), 1) if d_max_i==d_max_i else "—")
         st.divider()
         # ÉNERGIE
@@ -100,19 +109,23 @@ else:
         c1, c2, c3 = st.columns(3)
         with c1: card("Total (kWh)", f"{e_total}")
         with c2: card("Moyenne (kWh)", f"{e_mean}")
-        with c3: card("Max (kWh)", f"{e_max_v}", f"{date_of(e_max_i)} — {lieu_of(e_max_i)}")
+        with c3: card("Min (kWh) (≥4)", f"{e_min_v}", f"{date_of(e_min_i)} — {lieu_of(e_min_i)}")
+        c4, c5, _ = st.columns(3)
+        with c4: card("Max (kWh)", f"{e_max_v}", f"{date_of(e_max_i)} — {lieu_of(e_max_i)}")
         st.divider()    
         # Pmean
         st.markdown('#### 🔌 Puissance moyenne (kW) <span class="kpi-tag">OK only</span>', unsafe_allow_html=True)
-        c1, c2 = st.columns(2)
+        c1, c2, c3 = st.columns(3)
         with c1: card("Moyenne (kW)", f"{pm_mean}")
-        with c2: card("Max (kW)", f"{pm_max_v}", f"{date_of(pm_max_i)} — {lieu_of(pm_max_i)}")
+        with c2: card("Min (kW) (≥4)", f"{pm_min_v}", f"{date_of(pm_min_i)} — {lieu_of(pm_min_i)}")
+        with c3: card("Max (kW)", f"{pm_max_v}", f"{date_of(pm_max_i)} — {lieu_of(pm_max_i)}")
         st.divider()
         # Pmax
         st.markdown('#### 🚀 Puissance maximale (kW) <span class="kpi-tag">OK only</span>', unsafe_allow_html=True)
-        c1, c2 = st.columns(2)
+        c1, c2, c3 = st.columns(3)
         with c1: card("Moyenne (kW)", f"{px_mean}")
-        with c2: card("Max (kW)", f"{px_max_v}", f"{date_of(px_max_i)} — {lieu_of(px_max_i)}")
+        with c2: card("Min (kW) (≥4)", f"{px_min_v}", f"{date_of(px_min_i)} — {lieu_of(px_min_i)}")
+        with c3: card("Max (kW)", f"{px_max_v}", f"{date_of(px_max_i)} — {lieu_of(px_max_i)}")
         st.divider()
         # SOC
         st.markdown('#### 🔋 SOC <span class="kpi-tag">OK only</span>', unsafe_allow_html=True)
@@ -128,13 +141,10 @@ else:
         st.divider()
 
         st.markdown('#### 🔋 Charges 900V <span class="kpi-tag">OK only</span>', unsafe_allow_html=True)
-        if "charge_900V" in ok.columns:
-            c900 = pd.to_numeric(ok["charge_900V"], errors="coerce").fillna(0).astype(int)
-        else:
-            c900 = pd.Series(dtype=int)
+        c900 = pd.to_numeric(sess["charge_900V"], errors="coerce").fillna(0).astype(int)
 
-        total_900 = int(c900.sum()) if not c900.empty else 0
-        total_all = len(ok)
+        total_900 = int(c900.sum())
+        total_all = len(sess)
         pct_900   = round(total_900 / total_all * 100, 2) if total_all > 0 else 0.0
 
         c1, c2, c3 = st.columns(3)
@@ -144,9 +154,10 @@ else:
         st.divider()
         # Durées
         st.markdown('#### ⏱️ Durées de charge (min) <span class="kpi-tag">OK only</span>', unsafe_allow_html=True)
-        c1, c2 = st.columns(2)
+        c1, c2, c3 = st.columns(3)
         with c1: card("Moyenne (min)", f"{d_mean}")
-        with c2: card("Max (min)", f"{d_max_v}", f"{date_of(d_max_i)} — {lieu_of(d_max_i)}")
+        with c2: card("Min (min)", f"{d_min_v}", f"{date_of(d_min_i)} — {lieu_of(d_min_i)}")
+        with c3: card("Max (min)", f"{d_max_v}", f"{date_of(d_max_i)} — {lieu_of(d_max_i)}")
 
         # Charge par jour
         st.divider()
@@ -188,21 +199,29 @@ else:
                 with c2: card("Moyenne / jour (OK)", f"{mean_day}")
                 with c3: card("Médiane / jour (OK)", f"{med_day}")
 
-                # Max global
-                idx_max = d_site["Nb"].idxmax()
-                if pd.notna(idx_max):
-                    max_row = d_site.loc[idx_max]
-                    max_date = max_row["day_dt"]
-                    max_site = str(max_row["Site"])
-                    max_v = int(max_row["Nb"])
+                # Min / Max global 
+                max_row = d_site.loc[d_site["Nb"].idxmax()]
+                max_date = max_row["day_dt"]
+                max_site = str(max_row["Site"])
+                max_v = int(max_row["Nb"])
+                min_row = d_site.loc[d_site["Nb"].idxmin()]
+                min_date = min_row["day_dt"]
+                min_site = str(min_row["Site"])
+                min_v = int(min_row["Nb"])
 
-                    c4, c5, c6 = st.columns(3)
-                    with c5:
-                        card(
-                            "Max / jour (OK)",
-                            f"{max_v}",
-                            f"{max_date.strftime('%Y-%m-%d')} — site: {max_site}"
-                        )
+                c4, c5, _ = st.columns(3)
+                with c4:
+                    card(
+                        "Min / jour (OK)",
+                        f"{int(min_v)}",  # ❌ min_v n'existe pas encore ici
+                        f"{min_date.strftime('%Y-%m-%d')} — site: {min_site} ({max_site})"
+                    )
+                with c5:
+                    card(
+                        "Max / jour (OK)",
+                        f"{max_v}",
+                        f"{max_date.strftime('%Y-%m-%d')} — site: {max_site}"
+                    )
 
         st.divider()
         st.subheader("Taux de réussite/échec par type de véhicule")
@@ -390,4 +409,3 @@ def render():
     exec_namespace.setdefault("__builtins__", __builtins__)
 
     exec(TAB_CODE, exec_namespace)
-
