@@ -34,10 +34,77 @@ def card(title, value, sub=""):
         unsafe_allow_html=True
     )
 
+def _make_date_lieu(df, dt_s, dt_e):
+    def _date_of(idx):
+        if pd.isna(idx) or idx not in df.index:
+            return "—"
+        d = dt_e.loc[idx] if idx in dt_e.index else pd.NaT
+        if pd.isna(d) and idx in dt_s.index:
+            d = dt_s.loc[idx]
+        return d.strftime("%Y-%m-%d %H:%M:%S") if pd.notna(d) else "—"
+
+    def _lieu_of(idx):
+        if pd.isna(idx) or idx not in df.index:
+            return "—"
+        row = df.loc[idx]
+        site = str(row.get("Site", row.get("Name Project", ""))) or "—"
+        pdc  = str(row.get("PDC", "—"))
+        return f"{site} — PDC {pdc}"
+
+    return _date_of, _lieu_of
+
 if "is_ok" not in sess.columns:
     st.info("Colonne is_ok absente.")
 else:
-    ok = sess[sess["is_ok"]].copy()
+    is_ok_raw = sess["is_ok"]
+    is_ok_num = pd.to_numeric(is_ok_raw, errors="coerce")
+    ok_mask = is_ok_num.eq(1)
+    nok_mask = is_ok_num.eq(0)
+
+    if not (ok_mask.any() or nok_mask.any()):
+        is_ok_str = is_ok_raw.astype(str).str.strip().str.lower()
+        ok_mask = is_ok_str.isin({"1", "true", "vrai", "yes", "y", "ok"})
+        nok_mask = is_ok_str.isin({"0", "false", "faux", "no", "n", "nok"})
+
+    ok = sess.loc[ok_mask].copy()
+
+    if "moment" in sess.columns:
+        moment_all = sess["moment"].astype(str).str.strip().str.casefold()
+        fin_mask_all = moment_all.eq("fin de charge")
+        energy_mask = ok_mask | (nok_mask & fin_mask_all)
+    else:
+        energy_mask = ok_mask
+
+    energy_df = sess.loc[energy_mask].copy()
+    energy_dt_s = pd.to_datetime(
+        energy_df.get("Datetime start", pd.Series(index=energy_df.index, dtype="datetime64[ns]")),
+        errors="coerce"
+    )
+    energy_dt_e = pd.to_datetime(
+        energy_df.get("Datetime end", pd.Series(index=energy_df.index, dtype="datetime64[ns]")),
+        errors="coerce"
+    )
+    energy_series = pd.to_numeric(
+        energy_df.get("Energy (Kwh)", pd.Series(index=energy_df.index, dtype=float)),
+        errors="coerce"
+    )
+    energy_date_of, energy_lieu_of = _make_date_lieu(energy_df, energy_dt_s, energy_dt_e)
+
+    e_total = round(float(energy_series.sum(skipna=True)), 3) if energy_series.notna().any() else 0
+    e_mean  = round(float(energy_series.mean(skipna=True)), 3) if energy_series.notna().any() else 0
+    e_max_i = energy_series.idxmax() if energy_series.notna().any() else np.nan
+    e_max_v = (round(float(energy_series.loc[e_max_i]), 3) if e_max_i==e_max_i else "—")
+
+    st.divider()
+    st.markdown('#### ⚡ Énergie <span class="kpi-tag">OK only</span>', unsafe_allow_html=True)
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        card("Total (kWh)", f"{e_total}")
+    with c2:
+        card("Moyenne (kWh)", f"{e_mean}")
+    with c3:
+        card("Max (kWh)", f"{e_max_v}", f"{energy_date_of(e_max_i)} — {energy_lieu_of(e_max_i)}")
+
     if ok.empty:
         st.warning("Aucune charge OK dans ce périmètre.")
     else:
@@ -50,64 +117,31 @@ else:
 
         dt_s   = pd.to_datetime(ok_fin.get("Datetime start"), errors="coerce")
         dt_e   = pd.to_datetime(ok_fin.get("Datetime end"), errors="coerce")
-        energy = pd.to_numeric(ok_fin.get("Energy (Kwh)"), errors="coerce")
         pmean  = pd.to_numeric(ok_fin.get("Mean Power (Kw)"), errors="coerce")
         pmax   = pd.to_numeric(ok_fin.get("Max Power (Kw)"), errors="coerce")
         soc_s  = pd.to_numeric(ok_fin.get("SOC Start"), errors="coerce")
         soc_e  = pd.to_numeric(ok_fin.get("SOC End"), errors="coerce")
         dur_min = (dt_e - dt_s).dt.total_seconds() / 60
 
-        def date_of(idx):
-            if pd.isna(idx) or idx not in ok_fin.index:
-                return "—"
-            d = dt_e.loc[idx]
-            if pd.isna(d):
-                d = dt_s.loc[idx]
-            return d.strftime("%Y-%m-%d %H:%M:%S") if pd.notna(d) else "—"
-
-        def lieu_of(idx):
-            if pd.isna(idx) or idx not in ok_fin.index:
-                return "—"
-            site = str(ok_fin.loc[idx].get("Site", ok_fin.loc[idx].get("Name Project", ""))) or "—"
-            pdc  = str(ok_fin.loc[idx].get("PDC", "—"))
-            return f"{site} — PDC {pdc}"
-
-        # ÉNERGIE
-        e_total = round(float(energy.sum(skipna=True)), 3) if energy.notna().any() else 0
-        e_mean  = round(float(energy.mean(skipna=True)), 3) if energy.notna().any() else 0
-        e_max_i = energy.idxmax() if energy.notna().any() else np.nan
-        e_max_v = (round(float(energy.loc[e_max_i]), 3) if e_max_i==e_max_i else "—")
-
-        # Pmean
         pm_mean = round(float(pmean.mean(skipna=True)), 3) if pmean.notna().any() else 0
         pm_max_i = pmean.idxmax() if pmean.notna().any() else np.nan
         pm_max_v = (round(float(pmean.loc[pm_max_i]), 3) if pm_max_i==pm_max_i else "—")
 
-        # Pmax
         px_mean = round(float(pmax.mean(skipna=True)), 3) if pmax.notna().any() else 0
         px_max_i = pmax.idxmax() if pmax.notna().any() else np.nan
         px_max_v = (round(float(pmax.loc[px_max_i]), 3) if px_max_i==px_max_i else "—")
 
-        # SOC
         soc_start_mean = round(float(soc_s.mean(skipna=True)), 2) if soc_s.notna().any() else 0
         soc_end_mean   = round(float(soc_e.mean(skipna=True)), 2) if soc_e.notna().any() else 0
 
-        # Durées
         d_mean = round(float(dur_min.mean(skipna=True)), 1) if dur_min.notna().any() else 0
         d_max_i = dur_min.idxmax() if dur_min.notna().any() else np.nan
         d_max_v = (round(float(dur_min.loc[d_max_i]), 1) if d_max_i==d_max_i else "—")
-        st.divider()
-        # ÉNERGIE
-        st.markdown('#### ⚡ Énergie <span class="kpi-tag">OK only</span>', unsafe_allow_html=True)
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            card("Total (kWh)", f"{e_total}")
-        with c2:
-            card("Moyenne (kWh)", f"{e_mean}")
-        with c3:
-            card("Max (kWh)", f"{e_max_v}", f"{date_of(e_max_i)} — {lieu_of(e_max_i)}")
-        st.divider()
+
+        date_of, lieu_of = _make_date_lieu(ok_fin, dt_s, dt_e)
+
         # Pmean
+        st.divider()
         st.markdown('#### 🔌 Puissance moyenne (kW) <span class="kpi-tag">OK only</span>', unsafe_allow_html=True)
         c1, c2 = st.columns(2)
         with c1:
