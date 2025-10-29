@@ -68,6 +68,7 @@ else:
 
     ok = sess.loc[ok_mask].copy()
 
+    # Masque pour les données d'énergie
     if "moment" in sess.columns:
         moment_all = sess["moment"].astype(str).str.strip().str.casefold()
         fin_mask_all = moment_all.eq("fin de charge")
@@ -75,25 +76,23 @@ else:
     else:
         energy_mask = ok_mask
 
+    # Calculs pour l'énergie
     energy_df = sess.loc[energy_mask].copy()
-    energy_dt_s = pd.to_datetime(
-        energy_df.get("Datetime start", pd.Series(index=energy_df.index, dtype="datetime64[ns]")),
-        errors="coerce"
-    )
-    energy_dt_e = pd.to_datetime(
-        energy_df.get("Datetime end", pd.Series(index=energy_df.index, dtype="datetime64[ns]")),
-        errors="coerce"
-    )
-    energy_series = pd.to_numeric(
-        energy_df.get("Energy (Kwh)", pd.Series(index=energy_df.index, dtype=float)),
-        errors="coerce"
-    )
-    energy_date_of, energy_lieu_of = _make_date_lieu(energy_df, energy_dt_s, energy_dt_e)
-
+    energy_series = pd.to_numeric(energy_df.get("Energy (Kwh)", pd.Series(index=energy_df.index, dtype=float)), errors="coerce")
+    
     e_total = round(float(energy_series.sum(skipna=True)), 3) if energy_series.notna().any() else 0
     e_mean  = round(float(energy_series.mean(skipna=True)), 3) if energy_series.notna().any() else 0
     e_max_i = energy_series.idxmax() if energy_series.notna().any() else np.nan
     e_max_v = (round(float(energy_series.loc[e_max_i]), 3) if e_max_i==e_max_i else "—")
+
+    # Dates/lieux pour énergie (seulement si nécessaire)
+    if e_max_i==e_max_i:
+        energy_dt_s = pd.to_datetime(energy_df.get("Datetime start", pd.Series(index=energy_df.index, dtype="datetime64[ns]")), errors="coerce")
+        energy_dt_e = pd.to_datetime(energy_df.get("Datetime end", pd.Series(index=energy_df.index, dtype="datetime64[ns]")), errors="coerce")
+        energy_date_of, energy_lieu_of = _make_date_lieu(energy_df, energy_dt_s, energy_dt_e)
+    else:
+        energy_date_of = lambda x: "—"
+        energy_lieu_of = lambda x: "—"
 
     st.divider()
     st.markdown('#### ⚡ Énergie <span class="kpi-tag">OK only</span>', unsafe_allow_html=True)
@@ -123,24 +122,13 @@ else:
         soc_e  = pd.to_numeric(ok_fin.get("SOC End"), errors="coerce")
         dur_min = (dt_e - dt_s).dt.total_seconds() / 60
 
+        date_of, lieu_of = _make_date_lieu(ok_fin, dt_s, dt_e)
+
+        # Pmean
         pm_mean = round(float(pmean.mean(skipna=True)), 3) if pmean.notna().any() else 0
         pm_max_i = pmean.idxmax() if pmean.notna().any() else np.nan
         pm_max_v = (round(float(pmean.loc[pm_max_i]), 3) if pm_max_i==pm_max_i else "—")
 
-        px_mean = round(float(pmax.mean(skipna=True)), 3) if pmax.notna().any() else 0
-        px_max_i = pmax.idxmax() if pmax.notna().any() else np.nan
-        px_max_v = (round(float(pmax.loc[px_max_i]), 3) if px_max_i==px_max_i else "—")
-
-        soc_start_mean = round(float(soc_s.mean(skipna=True)), 2) if soc_s.notna().any() else 0
-        soc_end_mean   = round(float(soc_e.mean(skipna=True)), 2) if soc_e.notna().any() else 0
-
-        d_mean = round(float(dur_min.mean(skipna=True)), 1) if dur_min.notna().any() else 0
-        d_max_i = dur_min.idxmax() if dur_min.notna().any() else np.nan
-        d_max_v = (round(float(dur_min.loc[d_max_i]), 1) if d_max_i==d_max_i else "—")
-
-        date_of, lieu_of = _make_date_lieu(ok_fin, dt_s, dt_e)
-
-        # Pmean
         st.divider()
         st.markdown('#### 🔌 Puissance moyenne (kW) <span class="kpi-tag">OK only</span>', unsafe_allow_html=True)
         c1, c2 = st.columns(2)
@@ -148,41 +136,55 @@ else:
             card("Moyenne (kW)", f"{pm_mean}")
         with c2:
             card("Max (kW)", f"{pm_max_v}", f"{date_of(pm_max_i)} — {lieu_of(pm_max_i)}")
-        st.divider()
+
         # Pmax
+        px_mean = round(float(pmax.mean(skipna=True)), 3) if pmax.notna().any() else 0
+        px_max_i = pmax.idxmax() if pmax.notna().any() else np.nan
+        px_max_v = (round(float(pmax.loc[px_max_i]), 3) if px_max_i==px_max_i else "—")
+
+        st.divider()
         st.markdown('#### 🚀 Puissance maximale (kW) <span class="kpi-tag">OK only</span>', unsafe_allow_html=True)
         c1, c2 = st.columns(2)
         with c1:
             card("Moyenne (kW)", f"{px_mean}")
         with c2:
             card("Max (kW)", f"{px_max_v}", f"{date_of(px_max_i)} — {lieu_of(px_max_i)}")
-        st.divider()
+
         # SOC
-        st.markdown('#### 🔋 SOC <span class="kpi-tag">OK only</span>', unsafe_allow_html=True)
+        soc_start_mean = round(float(soc_s.mean(skipna=True)), 2) if soc_s.notna().any() else 0
+        soc_end_mean   = round(float(soc_e.mean(skipna=True)), 2) if soc_e.notna().any() else 0
+        
         if soc_s.notna().any() and soc_e.notna().any():
-            soc_gain = soc_e - soc_s
-            soc_gain_mean = round(float(soc_gain.mean(skipna=True)), 2)
+            soc_gain_mean = round(float((soc_e - soc_s).mean(skipna=True)), 2)
         else:
             soc_gain_mean = "—"
+
+        st.divider()
+        st.markdown('#### 🔋 SOC <span class="kpi-tag">OK only</span>', unsafe_allow_html=True)
         c1, c2, c3 = st.columns(3)
         with c1: card("SOC début moyen (%)", f"{soc_start_mean}")
         with c2: card("SOC fin moyen (%)", f"{soc_end_mean}")
         with c3: card("SOC moyen de recharge (%)", f"{soc_gain_mean}")
-        st.divider()
 
+        # Charges 900V
+        st.divider()
         st.markdown('#### 🔋 Charges 900V <span class="kpi-tag">OK only</span>', unsafe_allow_html=True)
         c900 = pd.to_numeric(sess["charge_900V"], errors="coerce").fillna(0).astype(int)
-
         total_900 = int(c900.sum())
         total_all = len(sess)
         pct_900   = round(total_900 / total_all * 100, 2) if total_all > 0 else 0.0
 
         c1, c2, c3 = st.columns(3)
-        with c2: card("Total charges 900V", f"{total_900}")
         with c1: card("Total charges", f"{total_all}")
+        with c2: card("Total charges 900V", f"{total_900}")
         with c3: card("% en 900V", f"{pct_900}%")
-        st.divider()
+
         # Durées
+        d_mean = round(float(dur_min.mean(skipna=True)), 1) if dur_min.notna().any() else 0
+        d_max_i = dur_min.idxmax() if dur_min.notna().any() else np.nan
+        d_max_v = (round(float(dur_min.loc[d_max_i]), 1) if d_max_i==d_max_i else "—")
+
+        st.divider()
         st.markdown('#### ⏱️ Durées de charge (min) <span class="kpi-tag">OK only</span>', unsafe_allow_html=True)
         c1, c2 = st.columns(2)
         with c1:
@@ -199,11 +201,9 @@ else:
         if d_site.empty:
             st.info("Feuille 'charges_daily_by_site' absente (relance kpi_cal).")
         else:
-            # garder seulement le périmètre de sites déjà filtré dans l'app (si présent)
             if "Site" in d_site.columns and site_sel:
                 d_site = d_site[d_site["Site"].isin(site_sel)]
 
-            # OK only + filtre dates
             d_site = d_site[d_site["Status"] == "OK"].copy()
             d_site["day_dt"] = pd.to_datetime(d_site["day"], errors="coerce")
             d_site = d_site.dropna(subset=["day_dt"])
@@ -215,7 +215,6 @@ else:
             if d_site.empty:
                 st.info("Aucune charge OK sur la période (après filtres).")
             else:
-                # Total journalier global (tous sites confondus)
                 daily_tot = (
                     d_site.groupby("day_dt", as_index=False)["Nb"].sum()
                         .sort_values("day_dt")
@@ -230,7 +229,6 @@ else:
                 with c2: card("Moyenne / jour (OK)", f"{mean_day}")
                 with c3: card("Médiane / jour (OK)", f"{med_day}")
 
-                # Max global
                 max_row = d_site.loc[d_site["Nb"].idxmax()]
                 max_date = max_row["day_dt"]
                 max_site = str(max_row["Site"])
@@ -238,15 +236,13 @@ else:
 
                 col_max = st.columns(1)[0]
                 with col_max:
-                    card(
-                        "Max / jour (OK)",
-                        f"{max_v}",
-                        f"{max_date.strftime('%Y-%m-%d')} — site: {max_site}"
-                    )
+                    card("Max / jour (OK)", f"{max_v}", f"{max_date.strftime('%Y-%m-%d')} — site: {max_site}")
 
+        # Taux de réussite par véhicule
         st.divider()
         st.subheader("Taux de réussite/échec par type de véhicule")
         charges_mac = tables.get("charges_mac", pd.DataFrame())
+        
         if charges_mac.empty:
             st.info("Feuille 'charges_mac' absente.")
         else:
@@ -264,9 +260,9 @@ else:
                     lambda x: True if str(x).strip().lower() in {"1", "true", "vrai", "yes", "y"} else False
                 )
                 veh = dfv["Vehicle"].astype(str) if "Vehicle" in dfv.columns else pd.Series("", index=dfv.index, dtype="object")
-                veh = veh.str.strip()
-                veh = veh.replace({"": np.nan, "nan": np.nan, "none": np.nan, "NULL": np.nan}, regex=False)
+                veh = veh.str.strip().replace({"": np.nan, "nan": np.nan, "none": np.nan, "NULL": np.nan}, regex=False)
                 dfv["Vehicle"] = veh.fillna("Unknown")
+                
                 mask_v = (
                     dfv[site_col_v].isin(st.session_state.site_sel)
                     & dfv["Datetime start"].ge(pd.Timestamp(st.session_state.d1))
@@ -288,6 +284,7 @@ else:
                     g["% Échec"] = 100 - g["% Réussite"]
                     g = g.sort_values(["total", "% Réussite"], ascending=[False, False]).reset_index(drop=True)
                     st.dataframe(g, use_container_width=True)
+                    
                     fig2 = px.bar(
                         g, x="Vehicle", y="% Réussite",
                         labels={"% Réussite": "% Réussite", "Vehicle": "Vehicle"},
@@ -297,6 +294,8 @@ else:
                     fig2.update_traces(texttemplate="%{y:.1f}%", textposition="outside")
                     fig2.update_layout(coloraxis_showscale=False, xaxis=dict(type="category"), yaxis=dict(range=[0, 100]))
                     plot(fig2, "tab4_Vehicle_success_no_unknown")
+
+        # Durées de fonctionnement
         st.divider()
         st.subheader("⏱️ Durée de fonctionnement totale (heures)")
 
@@ -319,13 +318,11 @@ else:
                     .groupby("Site", as_index=False)["dur_min"].sum()
                     .assign(Heures=lambda d: (d["dur_min"] / 60).round(1))
                     [["Site", "Heures"]]
-                    .sort_values("Heures", ascending=False)  # plus élevé → plus bas
+                    .sort_values("Heures", ascending=False)
                     .reset_index(drop=True)
                 )
                 st.dataframe(by_site, use_container_width=True)
 
-                # couleurs distinctes
-                import plotly.express as px
                 palette = px.colors.qualitative.D3 + px.colors.qualitative.Set2 + px.colors.qualitative.Plotly
                 cats_sites = by_site["Site"].tolist()
                 color_map_sites = {s: palette[i % len(palette)] for i, s in enumerate(cats_sites)}
@@ -346,6 +343,8 @@ else:
                 )
                 plot(fig_site, "dur_site_precalc")
 
+            # PAR PDC
+            st.divider()
             if not dpd.empty:
                 m_pdc_all = dpd["Site"].isin(site_sel) & dpd["day"].ge(d1_day) & dpd["day"].le(d2_day)
                 by_pdc_all = (
@@ -354,64 +353,48 @@ else:
                     .assign(Heures=lambda d: (d["dur_min"] / 60).round(1))
                     [["Site", "PDC", "Heures"]]
                 )
-        st.divider()
-        if not dpd.empty:
-            m_pdc_all = dpd["Site"].isin(site_sel) & dpd["day"].ge(d1_day) & dpd["day"].le(d2_day)
-            by_pdc_all = (
-                dpd.loc[m_pdc_all]
-                .groupby(["Site", "PDC"], as_index=False)["dur_min"].sum()
-                .assign(Heures=lambda d: (d["dur_min"] / 60).round(1))
-                [["Site", "PDC", "Heures"]]
-            )
-            sites_opts = sorted(by_pdc_all["Site"].dropna().unique().tolist())
-            if sites_opts:
-                site_focus = st.selectbox("🏢 Site", options=sites_opts, index=0, key="dur_site_sel_tab4_precalc")
+                sites_opts = sorted(by_pdc_all["Site"].dropna().unique().tolist())
+                if sites_opts:
+                    site_focus = st.selectbox("🏢 Site", options=sites_opts, index=0, key="dur_site_sel_tab4_precalc")
 
-                bp = (
-                    by_pdc_all[by_pdc_all["Site"] == site_focus]
-                    .drop(columns=["Site"])
-                    .sort_values("Heures", ascending=True) 
-                    .reset_index(drop=True)
-                )
-                st.dataframe(bp, use_container_width=True)
-
-                if not bp.empty:
-                    import plotly.graph_objects as go
-                    import plotly.express as px
-
-                    # palette franche (pas de fade)
-                    palette = px.colors.qualitative.D3 + px.colors.qualitative.Set2 + px.colors.qualitative.Plotly
-
-                    h_min, h_max = float(bp["Heures"].min()), float(bp["Heures"].max())
-
-                    fig_pdc = go.Figure()
-                    for i, row in bp.iterrows():
-                        pdc = str(row["PDC"])
-                        h   = float(row["Heures"])
-                        txt = f"{h} {'🔺' if h==h_max else ('🔻' if h==h_min else '')}"
-                        fig_pdc.add_bar(
-                            x=[h], y=[pdc], orientation="h",
-                            marker=dict(color=palette[i % len(palette)]),  # pas de line => pas de contour
-                            text=[txt], textposition="outside",
-                            name=pdc, showlegend=False
-                        )
-
-                    fig_pdc.update_traces(marker_line_width=0)
-
-                    cats_pdc = bp["PDC"].astype(str).tolist()
-                    fig_pdc.update_layout(
-                        title=f"Durée totale par PDC — {site_focus} (heures)",
-                        yaxis=dict(categoryorder="array", categoryarray=cats_pdc),
-                        plot_bgcolor="#ffffff",
-                        paper_bgcolor="#ffffff",
-                        bargap=0.15
+                    bp = (
+                        by_pdc_all[by_pdc_all["Site"] == site_focus]
+                        .drop(columns=["Site"])
+                        .sort_values("Heures", ascending=True) 
+                        .reset_index(drop=True)
                     )
-                    if hasattr(fig_pdc.layout, "coloraxis"):
-                        fig_pdc.layout.coloraxis = None
-                    plot(fig_pdc, f"dur_pdc_precalc_{site_focus}") 
+                    st.dataframe(bp, use_container_width=True)
 
+                    if not bp.empty:
+                        palette = px.colors.qualitative.D3 + px.colors.qualitative.Set2 + px.colors.qualitative.Plotly
 
+                        h_min, h_max = float(bp["Heures"].min()), float(bp["Heures"].max())
 
+                        fig_pdc = go.Figure()
+                        for i, row in bp.iterrows():
+                            pdc = str(row["PDC"])
+                            h   = float(row["Heures"])
+                            txt = f"{h} {'🔺' if h==h_max else ('🔻' if h==h_min else '')}"
+                            fig_pdc.add_bar(
+                                x=[h], y=[pdc], orientation="h",
+                                marker=dict(color=palette[i % len(palette)]),
+                                text=[txt], textposition="outside",
+                                name=pdc, showlegend=False
+                            )
+
+                        fig_pdc.update_traces(marker_line_width=0)
+
+                        cats_pdc = bp["PDC"].astype(str).tolist()
+                        fig_pdc.update_layout(
+                            title=f"Durée totale par PDC — {site_focus} (heures)",
+                            yaxis=dict(categoryorder="array", categoryarray=cats_pdc),
+                            plot_bgcolor="#ffffff",
+                            paper_bgcolor="#ffffff",
+                            bargap=0.15
+                        )
+                        if hasattr(fig_pdc.layout, "coloraxis"):
+                            fig_pdc.layout.coloraxis = None
+                        plot(fig_pdc, f"dur_pdc_precalc_{site_focus}")
 """
 
 def render():
@@ -422,7 +405,6 @@ def render():
     local_vars.setdefault('hide_zero_labels', getattr(ctx, 'hide_zero_labels', None))
     local_vars.setdefault('with_charge_link', getattr(ctx, 'with_charge_link', None))
     local_vars.setdefault('evi_counts_pivot', getattr(ctx, 'evi_counts_pivot', None))
-    # remove None entries
     local_vars = {k: v for k, v in local_vars.items() if v is not None}
 
     exec_namespace = dict(globals_dict)
