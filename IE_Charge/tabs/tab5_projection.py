@@ -136,8 +136,8 @@ else:
             _col_totals = _numeric_base[value_cols].apply(pd.to_numeric, errors="coerce").fillna(0).sum()
 
             _sum_dict = {disp_col: "TOTAL GÉNÉRAL"}
-            _sum_dict.update({col: _col_totals[col] for col in value_cols})
-            total_general_value = float(_col_totals.sum())
+            _sum_dict.update({col: int(_col_totals[col]) for col in value_cols})
+            total_general_value = int(_col_totals.sum())
             _sum_dict[_total_col] = total_general_value
             _sum_dict[_total_pct_col] = 100.0 if total_general_value else 0.0
             _sum_row = pd.DataFrame([_sum_dict], columns=[disp_col] + value_cols + [_total_col, _total_pct_col])
@@ -209,4 +209,3 @@ def render():
     # remove None entries
     local_vars = {k: v for k, v in local_vars.items() if v is not None}
     exec(TAB_CODE, globals_dict, local_vars)
-
