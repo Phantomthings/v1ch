@@ -31,30 +31,20 @@ else:
         st.info("Aucune combinaison sur ce périmètre (après filtres).")
 
     else:
-        default_sites = st.session_state.get("tab5_projection_sites")
-        if not isinstance(default_sites, list):
-            default_sites = []
-        default_sites = [s for s in default_sites if s in site_options][:2]
-        if not default_sites:
-            default_sites = [site_options[0]]
+        default_site = st.session_state.get("tab5_projection_site")
+        if default_site not in site_options:
+            default_site = site_options[0]
 
-        selected_sites = st.multiselect(
-            "Sites (projection)",
+        selected_index = site_options.index(default_site) if default_site in site_options else 0
+        selected_site = st.selectbox(
+            "Site (projection)",
             options=site_options,
-            default=default_sites,
-            key="tab5_projection_sites",
-            help="Sélectionnez jusqu'à 2 sites pour l'analyse de projection.",
+            index=selected_index,
+            key="tab5_projection_site",
+            help="Sélectionnez un seul site pour l'analyse de projection.",
         )
 
-        if len(selected_sites) > 2:
-            st.warning("Vous pouvez sélectionner au maximum 2 sites pour la projection.")
-            selected_sites = selected_sites[:2]
-            st.session_state["tab5_projection_sites"] = selected_sites
-
-        if not selected_sites:
-            st.info("Sélectionnez au moins un site pour afficher la projection.")
-
-        for site in selected_sites:
+        for site in [selected_site]:
             st.markdown(f"### 📍 {site}")
             hide_zero = st.checkbox("Masquer colonnes vides (0)", key=f"hide_zeros_{site}")
 
