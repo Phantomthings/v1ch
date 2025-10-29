@@ -60,9 +60,6 @@ TAB_CODE = dedent(
     err = sess_kpi[~sess_kpi["is_ok_filt"]].copy()
     # Vérif minimum
     if not err.empty and "moment_avancee" in err.columns and SITE_COL in err.columns:
-        # Total erreurs par projet
-        total_err_per_site = err.groupby(SITE_COL).size().reset_index(name="Total_NOK")
-
         # Erreurs par moment avancé
         err_grouped = (
             err.groupby([SITE_COL, "moment_avancee"])
@@ -78,23 +75,38 @@ TAB_CODE = dedent(
             sess_kpi.groupby(SITE_COL)
             .agg(
                 Total=("is_ok_filt", "count"),
-                OK=("is_ok_filt", "sum"),
+                Total_OK=("is_ok_filt", "sum"),
             )
             .reset_index()
         )
-        stat_global["NOK"] = stat_global["Total"] - stat_global["OK"]
-        stat_global["% OK"] = (stat_global["OK"] / stat_global["Total"] * 100).round(2)
-        stat_global["% NOK"] = (stat_global["NOK"] / stat_global["Total"] * 100).round(2)
+        stat_global["Total_NOK"] = stat_global["Total"] - stat_global["Total_OK"]
+        stat_global["% OK"] = (
+            np.where(stat_global["Total"].gt(0), stat_global["Total_OK"] / stat_global["Total"] * 100, 0)
+        ).round(2)
+        stat_global["% NOK"] = (
+            np.where(stat_global["Total"].gt(0), stat_global["Total_NOK"] / stat_global["Total"] * 100, 0)
+        ).round(2)
 
         # Fusionner les données
         recap = (
-            total_err_per_site
+            stat_global
             .merge(err_grouped, on=SITE_COL, how="left")
-            .merge(stat_global[[SITE_COL, "% OK", "% NOK"]], on=SITE_COL, how="left")
             .fillna(0)
             .sort_values("Total_NOK", ascending=False)
             .reset_index(drop=True)
         )
+        ordered_cols = [
+            SITE_COL,
+            "Total",
+            "Total_OK",
+            "Total_NOK",
+        ]
+        moment_cols = [
+            col
+            for col in recap.columns
+            if col not in ordered_cols + ["% OK", "% NOK"]
+        ]
+        recap = recap[ordered_cols + moment_cols + ["% OK", "% NOK"]]
     st.subheader("Récapitulatif des erreurs par site/moment")
     if 'recap' in locals():
         st.dataframe(recap, use_container_width=True)
