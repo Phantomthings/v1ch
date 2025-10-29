@@ -51,6 +51,21 @@ TABLES_TO_SAVE = {
     "evi_combo_by_site",
 }
 
+# Colonnes d'unicité définies directement dans la base KPI.
+# Elles sont reproduites ici pour dédupliquer les DataFrame avant l'insertion.
+UNIQUE_KEYS = {
+    "kpi_sessions": ["ID"],
+    "kpi_charges_mac": ["ID"],
+    "kpi_multi_attempts_hour": ["ID_ref", "Date_heure"],
+    "kpi_suspicious_under_1kwh": ["ID"],
+    "kpi_durations_site_daily": ["Site", "day"],
+    "kpi_durations_pdc_daily": ["PDC", "day"],
+    "kpi_charges_daily_by_site": ["Site", "day"],
+    "kpi_evi_combo_long": ["PDC", "Datetime start", "moment"],
+    "kpi_evi_combo_by_site": ["Site"],
+    "kpi_evi_combo_by_site_pdc": ["Site", "PDC"],
+}
+
 SITE_CODE_COL = "Name Project"
 SITE_COL = "Site"
 PDC_COL = "PDC"
@@ -771,6 +786,31 @@ def save_to_indicator(table_dict: dict, incremental: bool = True):
 
         df_cleaned = df.where(pd.notna(df), None)
 
+        unique_cols = UNIQUE_KEYS.get(table_name)
+        if unique_cols:
+            missing_cols = [col for col in unique_cols if col not in df_cleaned.columns]
+            if missing_cols:
+                print(
+                    "⚠️ Colonnes manquantes pour la déduplication de "
+                    f"{schema_name}.{table_name} : {', '.join(missing_cols)}"
+                )
+            else:
+                before = len(df_cleaned)
+                df_cleaned = (
+                    df_cleaned
+                    .sort_values(unique_cols)
+                    .drop_duplicates(subset=unique_cols, keep="last")
+                )
+                dropped = before - len(df_cleaned)
+                if dropped > 0:
+                    print(
+                        "ℹ️  "
+                        f"{dropped} doublons supprimés avant insertion dans {schema_name}.{table_name} "
+                        f"(clé unique : {', '.join(unique_cols)})"
+                    )
+
+        attempted_rows = len(df_cleaned)
+
         with engine_kpi.begin() as conn:
             try:
                 if incremental:
@@ -784,15 +824,15 @@ def save_to_indicator(table_dict: dict, incremental: bool = True):
                 affected_rows = getattr(result, "rowcount", None)
 
                 if affected_rows is None or affected_rows < 0:
-                    affected_rows = len(df)
+                    affected_rows = attempted_rows
 
                 message = (
                     f"✅ Table {'mise à jour' if incremental else 'insérée'} : "
                     f"{schema_name}.{table_name} ({affected_rows} lignes)"
                 )
 
-                if incremental and affected_rows != len(df):
-                    message += f" sur {len(df)} tentatives"
+                if incremental and affected_rows != attempted_rows:
+                    message += f" sur {attempted_rows} tentatives"
 
                 print(message)
             except Exception as e:
