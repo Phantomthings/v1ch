@@ -37,89 +37,46 @@ def card(title, value, sub=""):
 if "is_ok" not in sess.columns:
     st.info("Colonne is_ok absente.")
 else:
-    is_ok_series = sess["is_ok"].astype(bool)
-
-    moment_norm = None
-    if "moment" in sess.columns:
-        moment_norm = sess["moment"].astype(str).str.strip().str.casefold()
-        fin_mask_all = moment_norm.eq("fin de charge")
-    else:
-        fin_mask_all = pd.Series(False, index=sess.index)
-
-    ok_base = sess.loc[is_ok_series].copy()
-    ok_energy_mask = is_ok_series | ((~is_ok_series) & fin_mask_all)
-    ok_energy = sess.loc[ok_energy_mask].copy()
-
-    def _filter_fin(df):
-        if df.empty or moment_norm is None:
-            return df
-        local_mask = moment_norm.loc[df.index].eq("fin de charge")
-        return df.loc[local_mask].copy() if local_mask.any() else df
-
-    ok_energy_fin = _filter_fin(ok_energy)
-    ok_fin = _filter_fin(ok_base)
-
-    if ok_energy_fin.empty:
-        ok_energy_fin = ok_energy
-    if ok_fin.empty:
-        ok_fin = ok_base
-
-    if ok_energy_fin.empty:
+    ok = sess[sess["is_ok"]].copy()
+    if ok.empty:
         st.warning("Aucune charge OK dans ce périmètre.")
     else:
-        dt_s_energy = pd.to_datetime(ok_energy_fin.get("Datetime start"), errors="coerce")
-        dt_e_energy = pd.to_datetime(ok_energy_fin.get("Datetime end"), errors="coerce")
-        energy = pd.to_numeric(ok_energy_fin.get("Energy (Kwh)"), errors="coerce")
+        ok_fin = ok.copy()
+        if "moment" in ok_fin.columns:
+            moment = ok_fin["moment"].astype(str).str.strip().str.casefold()
+            fin_mask = moment.eq("fin de charge")
+            if fin_mask.any():
+                ok_fin = ok_fin.loc[fin_mask].copy()
 
-        if not ok_fin.empty:
-            dt_s = pd.to_datetime(ok_fin.get("Datetime start"), errors="coerce")
-            dt_e = pd.to_datetime(ok_fin.get("Datetime end"), errors="coerce")
-            pmean = pd.to_numeric(ok_fin.get("Mean Power (Kw)"), errors="coerce")
-            pmax = pd.to_numeric(ok_fin.get("Max Power (Kw)"), errors="coerce")
-            soc_s = pd.to_numeric(ok_fin.get("SOC Start"), errors="coerce")
-            soc_e = pd.to_numeric(ok_fin.get("SOC End"), errors="coerce")
-        else:
-            dt_s = pd.Series(dtype="datetime64[ns]")
-            dt_e = pd.Series(dtype="datetime64[ns]")
-            pmean = pd.Series(dtype=float)
-            pmax = pd.Series(dtype=float)
-            soc_s = pd.Series(dtype=float)
-            soc_e = pd.Series(dtype=float)
+        dt_s   = pd.to_datetime(ok_fin.get("Datetime start"), errors="coerce")
+        dt_e   = pd.to_datetime(ok_fin.get("Datetime end"), errors="coerce")
+        energy = pd.to_numeric(ok_fin.get("Energy (Kwh)"), errors="coerce")
+        pmean  = pd.to_numeric(ok_fin.get("Mean Power (Kw)"), errors="coerce")
+        pmax   = pd.to_numeric(ok_fin.get("Max Power (Kw)"), errors="coerce")
+        soc_s  = pd.to_numeric(ok_fin.get("SOC Start"), errors="coerce")
+        soc_e  = pd.to_numeric(ok_fin.get("SOC End"), errors="coerce")
+        dur_min = (dt_e - dt_s).dt.total_seconds() / 60
 
-        def _make_helpers(df, dt_start, dt_end):
-            def _date(idx):
-                if pd.isna(idx) or idx not in df.index:
-                    return "—"
-                d = dt_end.loc[idx]
-                if pd.isna(d):
-                    d = dt_start.loc[idx]
-                return d.strftime("%Y-%m-%d %H:%M:%S") if pd.notna(d) else "—"
+        def date_of(idx):
+            if pd.isna(idx) or idx not in ok_fin.index:
+                return "—"
+            d = dt_e.loc[idx]
+            if pd.isna(d):
+                d = dt_s.loc[idx]
+            return d.strftime("%Y-%m-%d %H:%M:%S") if pd.notna(d) else "—"
 
-            def _lieu(idx):
-                if pd.isna(idx) or idx not in df.index:
-                    return "—"
-                row = df.loc[idx]
-                site = str(row.get("Site", row.get("Name Project", ""))) or "—"
-                pdc = str(row.get("PDC", "—"))
-                return f"{site} — PDC {pdc}"
-
-            return _date, _lieu
-
-        date_of_energy, lieu_of_energy = _make_helpers(ok_energy_fin, dt_s_energy, dt_e_energy)
-        date_of, lieu_of = _make_helpers(ok_fin, dt_s, dt_e)
-
-        def _fmt_datetime(val):
-            return val.strftime("%Y-%m-%d %H:%M:%S") if pd.notna(val) else "—"
+        def lieu_of(idx):
+            if pd.isna(idx) or idx not in ok_fin.index:
+                return "—"
+            site = str(ok_fin.loc[idx].get("Site", ok_fin.loc[idx].get("Name Project", ""))) or "—"
+            pdc  = str(ok_fin.loc[idx].get("PDC", "—"))
+            return f"{site} — PDC {pdc}"
 
         # ÉNERGIE
-        energy_valid = energy.notna().any()
-        e_total = round(float(energy.sum(skipna=True)), 3) if energy_valid else 0
-        e_mean = round(float(energy.mean(skipna=True)), 3) if energy_valid else 0
-        e_max_i = energy.idxmax() if energy_valid else np.nan
-        e_max_v = (round(float(energy.loc[e_max_i]), 3) if e_max_i == e_max_i else "—")
-        energy_sub = (
-            f"{date_of_energy(e_max_i)} — {lieu_of_energy(e_max_i)}" if e_max_i == e_max_i else "—"
-        )
+        e_total = round(float(energy.sum(skipna=True)), 3) if energy.notna().any() else 0
+        e_mean  = round(float(energy.mean(skipna=True)), 3) if energy.notna().any() else 0
+        e_max_i = energy.idxmax() if energy.notna().any() else np.nan
+        e_max_v = (round(float(energy.loc[e_max_i]), 3) if e_max_i==e_max_i else "—")
 
         # Pmean
         pm_mean = round(float(pmean.mean(skipna=True)), 3) if pmean.notna().any() else 0
@@ -136,67 +93,9 @@ else:
         soc_end_mean   = round(float(soc_e.mean(skipna=True)), 2) if soc_e.notna().any() else 0
 
         # Durées
-        dur_row = (dt_e - dt_s).dt.total_seconds() / 60 if not ok_fin.empty else pd.Series(dtype=float)
-        d_mean = 0
-        d_max_v = "—"
-        d_max_sub = "—"
-
-        def _first_non_empty(series):
-            for val in series:
-                if pd.isna(val):
-                    continue
-                txt = str(val).strip()
-                if txt:
-                    return val
-            return np.nan
-
-        durations_grouped = pd.DataFrame()
-        if not ok_fin.empty and "ID" in ok_fin.columns:
-            tmp = ok_fin.copy()
-            tmp["_dt_start"] = dt_s
-            tmp["_dt_end"] = dt_e
-            tmp["_id"] = tmp["ID"].astype(str).str.strip()
-            tmp = tmp[tmp["_id"].astype(bool)]
-
-            if not tmp.empty:
-                agg_dict = {
-                    "dt_start": ("_dt_start", "min"),
-                    "dt_end": ("_dt_end", "max"),
-                }
-                if "Site" in tmp.columns:
-                    agg_dict["Site"] = ("Site", _first_non_empty)
-                if "Name Project" in tmp.columns:
-                    agg_dict["Name Project"] = ("Name Project", _first_non_empty)
-                if "PDC" in tmp.columns:
-                    agg_dict["PDC"] = ("PDC", _first_non_empty)
-
-                durations_grouped = (
-                    tmp.groupby("_id").agg(**agg_dict).reset_index().rename(columns={"_id": "ID"})
-                )
-                durations_grouped["dur_min"] = (
-                    (durations_grouped["dt_end"] - durations_grouped["dt_start"]).dt.total_seconds() / 60
-                )
-                durations_grouped = durations_grouped.dropna(subset=["dur_min"])
-                durations_grouped = durations_grouped[durations_grouped["dur_min"].ge(0)]
-
-        if not durations_grouped.empty and durations_grouped["dur_min"].notna().any():
-            d_mean = round(float(durations_grouped["dur_min"].mean(skipna=True)), 1)
-            idx_max = durations_grouped["dur_min"].idxmax()
-            max_row = durations_grouped.loc[idx_max]
-            d_max_v = round(float(max_row["dur_min"]), 1)
-            dt_ref = max_row["dt_end"] if pd.notna(max_row["dt_end"]) else max_row["dt_start"]
-            site_val = max_row.get("Site", np.nan)
-            if (pd.isna(site_val) or not str(site_val).strip()) and "Name Project" in durations_grouped.columns:
-                site_val = max_row.get("Name Project", np.nan)
-            site_txt = str(site_val).strip() if pd.notna(site_val) and str(site_val).strip() else "—"
-            pdc_val = max_row.get("PDC", np.nan)
-            pdc_txt = str(pdc_val).strip() if pd.notna(pdc_val) and str(pdc_val).strip() else "—"
-            d_max_sub = f"{_fmt_datetime(dt_ref)} — {site_txt} — PDC {pdc_txt}"
-        else:
-            d_mean = round(float(dur_row.mean(skipna=True)), 1) if dur_row.notna().any() else 0
-            d_max_i = dur_row.idxmax() if dur_row.notna().any() else np.nan
-            d_max_v = (round(float(dur_row.loc[d_max_i]), 1) if d_max_i==d_max_i else "—")
-            d_max_sub = f"{date_of(d_max_i)} — {lieu_of(d_max_i)}" if d_max_i==d_max_i else "—"
+        d_mean = round(float(dur_min.mean(skipna=True)), 1) if dur_min.notna().any() else 0
+        d_max_i = dur_min.idxmax() if dur_min.notna().any() else np.nan
+        d_max_v = (round(float(dur_min.loc[d_max_i]), 1) if d_max_i==d_max_i else "—")
         st.divider()
         # ÉNERGIE
         st.markdown('#### ⚡ Énergie <span class="kpi-tag">OK only</span>', unsafe_allow_html=True)
@@ -206,7 +105,7 @@ else:
         with c2:
             card("Moyenne (kWh)", f"{e_mean}")
         with c3:
-            card("Max (kWh)", f"{e_max_v}", energy_sub)
+            card("Max (kWh)", f"{e_max_v}", f"{date_of(e_max_i)} — {lieu_of(e_max_i)}")
         st.divider()
         # Pmean
         st.markdown('#### 🔌 Puissance moyenne (kW) <span class="kpi-tag">OK only</span>', unsafe_allow_html=True)
@@ -255,7 +154,7 @@ else:
         with c1:
             card("Moyenne (min)", f"{d_mean}")
         with c2:
-            card("Max (min)", f"{d_max_v}", d_max_sub)
+            card("Max (min)", f"{d_max_v}", f"{date_of(d_max_i)} — {lieu_of(d_max_i)}")
 
         # Charge par jour
         st.divider()
