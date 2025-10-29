@@ -796,11 +796,20 @@ def save_to_indicator(table_dict: dict, incremental: bool = True):
                 )
             else:
                 before = len(df_cleaned)
-                df_cleaned = (
-                    df_cleaned
+
+                complete_keys_mask = df_cleaned[unique_cols].notna().all(axis=1)
+
+                dedup_part = (
+                    df_cleaned.loc[complete_keys_mask]
                     .sort_values(unique_cols)
                     .drop_duplicates(subset=unique_cols, keep="last")
                 )
+
+                df_cleaned = pd.concat(
+                    [dedup_part, df_cleaned.loc[~complete_keys_mask]],
+                    ignore_index=True,
+                )
+
                 dropped = before - len(df_cleaned)
                 if dropped > 0:
                     print(
