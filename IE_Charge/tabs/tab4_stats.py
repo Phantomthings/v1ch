@@ -349,26 +349,52 @@ else:
             # PAR PDC
             st.divider()
             if not dpd.empty:
-                m_pdc_all = dpd["Site"].isin(site_sel) & dpd["day"].ge(d1_day) & dpd["day"].le(d2_day)
+                period_mask = dpd["day"].ge(d1_day) & dpd["day"].le(d2_day)
+                dpd_period = dpd.loc[period_mask].copy()
+
+                if site_sel:
+                    dpd_filtered = dpd_period[dpd_period["Site"].isin(site_sel)]
+                else:
+                    dpd_filtered = dpd_period
+
                 by_pdc_all = (
-                    dpd.loc[m_pdc_all]
+                    dpd_filtered
                     .groupby(["Site", "PDC"], as_index=False)["dur_min"].sum()
                     .assign(Heures=lambda d: (d["dur_min"] / 60).round(1))
                     [["Site", "PDC", "Heures"]]
                 )
-                sites_opts = sorted(by_pdc_all["Site"].dropna().unique().tolist())
+
+                sites_with_data = dpd_period["Site"].dropna().tolist()
+                selected_sites = list(site_sel) if site_sel else []
+                all_sites_list = list(locals().get("sites", []))
+
+                def _ordered_unique(sequence):
+                    seen = set()
+                    ordered = []
+                    for item in sequence:
+                        if item in seen or pd.isna(item):
+                            continue
+                        seen.add(item)
+                        ordered.append(item)
+                    return ordered
+
+                sites_opts = _ordered_unique(selected_sites + sites_with_data + all_sites_list)
+
                 if sites_opts:
                     site_focus = st.selectbox("🏢 Site", options=sites_opts, index=0, key="dur_site_sel_tab4_precalc")
 
                     bp = (
                         by_pdc_all[by_pdc_all["Site"] == site_focus]
                         .drop(columns=["Site"])
-                        .sort_values("Heures", ascending=True) 
+                        .sort_values("Heures", ascending=True)
                         .reset_index(drop=True)
                     )
-                    st.dataframe(bp, use_container_width=True)
 
-                    if not bp.empty:
+                    if bp.empty:
+                        st.info("Aucune donnée de durée disponible pour ce site sur la période sélectionnée.")
+                    else:
+                        st.dataframe(bp, use_container_width=True)
+
                         palette = px.colors.qualitative.D3 + px.colors.qualitative.Set2 + px.colors.qualitative.Plotly
 
                         h_min, h_max = float(bp["Heures"].min()), float(bp["Heures"].max())
