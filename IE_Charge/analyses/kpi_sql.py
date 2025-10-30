@@ -51,6 +51,19 @@ TABLES_TO_SAVE = {
     "evi_combo_by_site",
 }
 
+TABLE_UNIQUE_KEYS = {
+    "sessions": ["ID"],
+    "charges_daily_by_site": ["Site", "day", "Status"],
+    "durations_pdc_daily": ["Site", "PDC", "day"],
+    "durations_site_daily": ["Site", "day"],
+    "suspicious_under_1kwh": ["ID"],
+    "multi_attempts_hour": ["ID_ref", "Date_heure"],
+    "charges_mac": ["ID"],
+    "evi_combo_long": ["Site", "PDC", "EVI_Code", "EVI_Step", "Datetime start"],
+    "evi_combo_by_site_pdc": ["Site", "PDC", "EVI_Code", "EVI_Step"],
+    "evi_combo_by_site": ["Site", "EVI_Step", "EVI_Code"],
+}
+
 SITE_CODE_COL = "Name Project"
 SITE_COL = "Site"
 PDC_COL = "PDC"
@@ -730,6 +743,22 @@ def save_to_indicator(table_dict: dict, incremental: bool = True):
         table_name = f"kpi_{name.lower()}"
         schema_name = "Charges"
 
+        unique_keys = TABLE_UNIQUE_KEYS.get(name)
+        df_to_save = df
+        if unique_keys:
+            missing_cols = [col for col in unique_keys if col not in df.columns]
+            if missing_cols:
+                print(
+                    f"⚠️ COLONNES MANQUANTES POUR LE CONTRÔLE DE DOUBLONS DANS {name.upper()} : {', '.join(missing_cols)}"
+                )
+            else:
+                dup_mask = df.duplicated(subset=unique_keys, keep=False)
+                if dup_mask.any():
+                    print(
+                        f"⚠️ DOUBLONS DÉTECTÉS DANS {name.upper()} SUR ({', '.join(unique_keys)}) : {dup_mask.sum()} LIGNES CONCERNÉES"
+                    )
+                df_to_save = df.drop_duplicates(subset=unique_keys, keep="last")
+
         try:
             table = Table(
                 table_name, metadata, autoload_with=engine_kpi, schema=schema_name
@@ -738,7 +767,7 @@ def save_to_indicator(table_dict: dict, incremental: bool = True):
             print(f"❌ Table non trouvée ou erreur chargement : {table_name} → {e}")
             continue
 
-        df_cleaned = df.where(pd.notna(df), None)
+        df_cleaned = df_to_save.where(pd.notna(df_to_save), None)
 
         with engine_kpi.begin() as conn:
             try:
@@ -748,10 +777,10 @@ def save_to_indicator(table_dict: dict, incremental: bool = True):
                     stmt = insert(table).prefix_with("IGNORE")
                 else:
                     stmt = insert(table)
-                
+
                 conn.execute(stmt, df_cleaned.to_dict(orient="records"))
                 print(
-                    f"✅ Table {'mise à jour' if incremental else 'insérée'} : {schema_name}.{table_name} ({len(df)} lignes)"
+                    f"✅ Table {'mise à jour' if incremental else 'insérée'} : {schema_name}.{table_name} ({len(df_to_save)} lignes)"
                 )
             except Exception as e:
                 print(f"❌ Erreur insertion pour {table_name} → {e}")
