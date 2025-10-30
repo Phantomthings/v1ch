@@ -31,26 +31,28 @@ else:
         st.info("Aucune combinaison sur ce périmètre (après filtres).")
 
     else:
-        stored_sites = st.session_state.get("tab5_projection_sites", [])
-        default_sites = [s for s in stored_sites if s in site_options][:2]
-        if not default_sites:
-            default_sites = site_options[:1]
+        default_sites = st.session_state.get("tab5_projection_sites", [])
+        if not isinstance(default_sites, list):
+            default_sites = [default_sites] if default_sites else []
+        default_sites = [s for s in default_sites if s in site_options]
+        if not default_sites and site_options:
+            default_sites = [site_options[0]]
 
         selected_sites = st.multiselect(
-            "Sites (projection)",
+            "Sites (projection) - Maximum 2 sites",
             options=site_options,
             default=default_sites,
             key="tab5_projection_sites",
             help="Sélectionnez jusqu'à 2 sites pour l'analyse de projection.",
         )
 
+        # Validation : limiter à 2 sites maximum
         if len(selected_sites) > 2:
-            st.warning("Vous ne pouvez sélectionner que 2 sites maximum.")
+            st.error("⚠️ Vous ne pouvez sélectionner que 2 sites maximum. Veuillez désélectionner un site.")
             selected_sites = selected_sites[:2]
-            st.session_state["tab5_projection_sites"] = selected_sites
 
         if not selected_sites:
-            st.info("Sélectionnez au moins un site pour afficher la projection.")
+            st.info("Veuillez sélectionner au moins un site.")
         else:
             for site in selected_sites:
                 st.markdown(f"### 📍 {site}")
