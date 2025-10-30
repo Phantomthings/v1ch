@@ -1,6 +1,5 @@
 from pathlib import Path
 from datetime import datetime, timedelta
-import hashlib
 
 import numpy as np
 import pandas as pd
@@ -52,23 +51,6 @@ TABLES_TO_SAVE = {
     "evi_combo_by_site",
 }
 
-HASH_SKIP_TABLES = {"sessions", "suspicious_under_1kwh"}
-
-# ✅ CORRECTION DES CLÉS UNIQUES
-# Elles doivent correspondre EXACTEMENT aux colonnes de GROUP BY dans chaque fonction
-UNIQUE_KEYS = {
-    "kpi_sessions": ["ID"],
-    "kpi_charges_mac": ["ID"],
-    "kpi_multi_attempts_hour": ["ID_ref", "Date_heure"],
-    "kpi_suspicious_under_1kwh": ["ID"],
-    "kpi_durations_site_daily": ["Site", "day"],
-    "kpi_durations_pdc_daily": ["Site", "PDC", "day"],  # ✅ Ajout de "Site"
-    "kpi_charges_daily_by_site": ["Site", "day", "Status"],  # ✅ Ajout de "Status"
-    "kpi_evi_combo_long": ["Site", "PDC", "Datetime start", "EVI_Code", "EVI_Step"],  # ✅ Plus précis
-    "kpi_evi_combo_by_site": ["Site", "EVI_Code", "EVI_Step"],  # ✅ Ajout dimensions agrégation
-    "kpi_evi_combo_by_site_pdc": ["Site", "PDC", "EVI_Code", "EVI_Step"],  # ✅ Ajout dimensions agrégation
-}
-
 SITE_CODE_COL = "Name Project"
 SITE_COL = "Site"
 PDC_COL = "PDC"
@@ -101,38 +83,6 @@ SITE_MAP = {
 }
 
 
-def _normalize_for_hash(value) -> str:
-    """Convertit une valeur en chaîne stable pour la génération de hash."""
-    if pd.isna(value):
-        return ""
-
-    if isinstance(value, pd.Timestamp):
-        # On supprime l'information de fuseau pour garantir la stabilité
-        try:
-            value = value.tz_localize(None)
-        except (TypeError, AttributeError):
-            pass
-        return value.strftime("%Y-%m-%d %H:%M:%S")
-
-    if isinstance(value, datetime):
-        return value.replace(tzinfo=None).strftime("%Y-%m-%d %H:%M:%S")
-
-    text = str(value).strip()
-    return "" if text.lower() == "nat" else text
-
-
-def _append_hash_column(df: pd.DataFrame, columns: list[str], column_name: str = "HASH_CLES") -> pd.DataFrame:
-    """Ajoute une colonne de hash basée sur les colonnes fournies."""
-    if not columns:
-        return df
-
-    df.drop(columns=[column_name], inplace=True, errors="ignore")
-    normalized = df[columns].applymap(_normalize_for_hash)
-    concatenated = normalized.apply(lambda row: "||".join(row.values.tolist()), axis=1)
-    df[column_name] = concatenated.apply(lambda val: hashlib.sha256(val.encode("utf-8")).hexdigest())
-    return df
-
-
 def get_last_update_date(table_name: str) -> datetime:
     """Récupère la dernière date de mise à jour pour une table."""
     schema_name = "Charges"
@@ -148,13 +98,14 @@ def get_last_update_date(table_name: str) -> datetime:
         "multi_attempts_hour": "Date_heure",
         "charges_mac": "Datetime start",
         "evi_combo_long": "Datetime start",
-        "evi_combo_by_site": None,
-        "evi_combo_by_site_pdc": None,
+        "evi_combo_by_site": None,  # Pas de date, on recharge tout
+        "evi_combo_by_site_pdc": None,  # Pas de date, on recharge tout
     }
     
     date_col = date_columns.get(table_name)
     
     if date_col is None:
+        # Tables agrégées sans date : on recharge tout (renvoyer une date très ancienne)
         return datetime(2025, 2, 6)
     
     try:
@@ -162,10 +113,12 @@ def get_last_update_date(table_name: str) -> datetime:
         with engine_kpi.connect() as conn:
             result = conn.execute(text(query)).fetchone()
             if result and result[0]:
+                # Retourner 2 jours avant pour avoir une marge de sécurité
                 return result[0] - timedelta(days=2)
     except Exception as e:
         print(f"⚠️ Impossible de récupérer la dernière date pour {table_name}: {e}")
     
+    # Par défaut, retourner la date de début du projet
     return datetime(2025, 2, 6)
 
 
@@ -296,8 +249,6 @@ def build_evi_combo_tables(df: pd.DataFrame) -> dict:
     evi_long["step_num"] = pd.to_numeric(evi_long["EVI_Step"], errors="coerce").fillna(-1).astype(int)
     evi_long["code_num"] = pd.to_numeric(evi_long["EVI_Code"], errors="coerce").fillna(-1).astype(int)
     evi_long["moment"] = evi_long["step_num"].map(_map_step_to_moment_int)
-    
-    # ✅ Agrégation par site (avec toutes les dimensions)
     by_site = (
         evi_long.groupby(["Site", "EVI_Code", "EVI_Step"], as_index=False)
         .size()
@@ -310,7 +261,6 @@ def build_evi_combo_tables(df: pd.DataFrame) -> dict:
     ).round(2)
 
     if pdc_col:
-        # ✅ Agrégation par site/PDC (avec toutes les dimensions)
         by_site_pdc = (
             evi_long.groupby(["Site", "PDC", "EVI_Code", "EVI_Step"], as_index=False)
             .size()
@@ -350,47 +300,14 @@ def build_durations_daily(df: pd.DataFrame) -> dict:
     ok["_day"] = pd.to_datetime(ok["Datetime start"], errors="coerce").dt.floor("D")
     ok["dur_min"] = dur_min.loc[ok.index].fillna(0)
 
-    base = df.copy()
-    base["_day"] = pd.to_datetime(base.get("Datetime start"), errors="coerce").dt.floor("D")
-    base = base[base["_day"].notna()].copy()
-
-    # ✅ Agrégation par site/jour
     dur_site_daily = (
-        ok.groupby([site_col, "_day"], dropna=False)["dur_min"].sum().reset_index()
-        if not ok.empty
-        else pd.DataFrame(columns=[site_col, "_day", "dur_min"])
+        ok.groupby([site_col, "_day"], dropna=False)["dur_min"].sum().reset_index().rename(columns={site_col: "Site", "_day": "day"})
     )
 
-    if not base.empty:
-        all_site_days = base[[site_col, "_day"]].drop_duplicates()
-        dur_site_daily = all_site_days.merge(
-            dur_site_daily,
-            on=[site_col, "_day"],
-            how="left",
-        )
-    dur_site_daily = dur_site_daily.rename(columns={site_col: "Site", "_day": "day"})
-    dur_site_daily["dur_min"] = dur_site_daily["dur_min"].fillna(0)
-
     if "PDC" in ok.columns:
-        # ✅ Agrégation par site/PDC/jour
         dur_pdc_daily = (
-            ok.groupby([site_col, "PDC", "_day"], dropna=False)["dur_min"].sum().reset_index()
-            if not ok.empty
-            else pd.DataFrame(columns=[site_col, "PDC", "_day", "dur_min"])
+            ok.groupby([site_col, "PDC", "_day"], dropna=False)["dur_min"].sum().reset_index().rename(columns={site_col: "Site", "_day": "day"})
         )
-        if "PDC" in base.columns:
-            all_site_pdc_days = (
-                base[[site_col, "PDC", "_day"]]
-                .dropna(subset=["_day"])
-                .drop_duplicates()
-            )
-            dur_pdc_daily = all_site_pdc_days.merge(
-                dur_pdc_daily,
-                on=[site_col, "PDC", "_day"],
-                how="left",
-            )
-        dur_pdc_daily = dur_pdc_daily.rename(columns={site_col: "Site", "_day": "day"})
-        dur_pdc_daily["dur_min"] = dur_pdc_daily["dur_min"].fillna(0)
     else:
         dur_pdc_daily = pd.DataFrame(columns=["Site", "PDC", "day", "dur_min"])
 
@@ -712,7 +629,6 @@ def build_charges_daily_by_site(df: pd.DataFrame) -> pd.DataFrame:
 
     base["day"] = base["dt"].dt.strftime("%Y-%m-%d")
 
-    # ✅ Agrégation par site/jour/statut
     d_site = base.groupby(["Site", "day", "Status"], as_index=False).size().rename(columns={"size": "Nb"})
 
     return d_site.sort_values(["Site", "day"])
@@ -781,6 +697,7 @@ def delete_old_data(table_name: str, start_date: datetime):
     date_col = date_columns.get(table_name)
     
     if date_col is None:
+        # Pour les tables agrégées, on supprime tout
         try:
             with engine_kpi.begin() as conn:
                 conn.execute(text(f"DELETE FROM {full_table}"))
@@ -788,6 +705,7 @@ def delete_old_data(table_name: str, start_date: datetime):
         except Exception as e:
             print(f"⚠️ Erreur lors de la suppression des données de {table_name}: {e}")
     else:
+        # Pour les autres tables, on supprime depuis start_date
         try:
             with engine_kpi.begin() as conn:
                 delete_query = f"DELETE FROM {full_table} WHERE `{date_col}` >= '{start_date.strftime('%Y-%m-%d')}'"
@@ -820,78 +738,21 @@ def save_to_indicator(table_dict: dict, incremental: bool = True):
             print(f"❌ Table non trouvée ou erreur chargement : {table_name} → {e}")
             continue
 
-        df_cleaned = df.where(pd.notna(df), None).copy()
-
-        unique_cols = UNIQUE_KEYS.get(table_name)
-        if unique_cols:
-            missing_cols = [col for col in unique_cols if col not in df_cleaned.columns]
-            if missing_cols:
-                print(
-                    "⚠️ Colonnes manquantes pour la déduplication de "
-                    f"{schema_name}.{table_name} : {', '.join(missing_cols)}"
-                )
-            else:
-                before = len(df_cleaned)
-
-                complete_keys_mask = df_cleaned[unique_cols].notna().all(axis=1)
-
-                # ✅ Vérifier s'il y a de VRAIS doublons
-                true_duplicates = df_cleaned.loc[complete_keys_mask].duplicated(
-                    subset=unique_cols, keep=False
-                ).sum()
-
-                dedup_part = (
-                    df_cleaned.loc[complete_keys_mask]
-                    .sort_values(unique_cols)
-                    .drop_duplicates(subset=unique_cols, keep="last")
-                )
-
-                df_cleaned = pd.concat(
-                    [dedup_part, df_cleaned.loc[~complete_keys_mask]],
-                    ignore_index=True,
-                )
-
-                dropped = before - len(df_cleaned)
-                if dropped > 0:
-                    print(
-                        f"ℹ️  {dropped} doublons supprimés avant insertion dans {schema_name}.{table_name} "
-                        f"(clé unique : {', '.join(unique_cols)}) | Vrais doublons : {true_duplicates}"
-                    )
-
-        should_add_hash = name not in HASH_SKIP_TABLES
-        if should_add_hash:
-            if unique_cols and not any(col not in df_cleaned.columns for col in unique_cols):
-                df_cleaned = _append_hash_column(df_cleaned, unique_cols)
-            else:
-                print(
-                    f"⚠️ Impossible d'ajouter HASH_CLES pour {schema_name}.{table_name} : "
-                    "colonnes de clé manquantes"
-                )
-
-        attempted_rows = len(df_cleaned)
+        df_cleaned = df.where(pd.notna(df), None)
 
         with engine_kpi.begin() as conn:
             try:
                 if incremental:
+                    # Utiliser REPLACE pour éviter les doublons (nécessite une clé primaire)
+                    # ou INSERT IGNORE pour ignorer les doublons
                     stmt = insert(table).prefix_with("IGNORE")
                 else:
                     stmt = insert(table)
                 
-                result = conn.execute(stmt, df_cleaned.to_dict(orient="records"))
-                affected_rows = getattr(result, "rowcount", None)
-
-                if affected_rows is None or affected_rows < 0:
-                    affected_rows = attempted_rows
-
-                message = (
-                    f"✅ Table {'mise à jour' if incremental else 'insérée'} : "
-                    f"{schema_name}.{table_name} ({affected_rows} lignes)"
+                conn.execute(stmt, df_cleaned.to_dict(orient="records"))
+                print(
+                    f"✅ Table {'mise à jour' if incremental else 'insérée'} : {schema_name}.{table_name} ({len(df)} lignes)"
                 )
-
-                if incremental and affected_rows != attempted_rows:
-                    message += f" sur {attempted_rows} tentatives"
-
-                print(message)
             except Exception as e:
                 print(f"❌ Erreur insertion pour {table_name} → {e}")
 
@@ -901,10 +762,12 @@ def main():
     print("DÉMARRAGE DU PROCESSUS DE MISE À JOUR INCRÉMENTALE")
     print("=" * 80)
     
+    # Déterminer la date de dernière mise à jour
     last_update = get_last_update_date("sessions")
     print(f"\n📅 Dernière mise à jour détectée : {last_update.strftime('%Y-%m-%d')}")
     print(f"📥 Récupération des données depuis : {last_update.strftime('%Y-%m-%d')}")
     
+    # Récupérer uniquement les nouvelles données
     df = fetch_charge_data(start_date=last_update)
     print(f"✅ {len(df)} nouvelles charges récupérées")
     
@@ -912,10 +775,12 @@ def main():
         print("ℹ️  Aucune nouvelle donnée à traiter. Arrêt du processus.")
         return
     
+    # Supprimer les anciennes données pour éviter les doublons
     print(f"\n🗑️  Suppression des données existantes depuis {last_update.strftime('%Y-%m-%d')}...")
     for table in TABLES_TO_SAVE:
         delete_old_data(table, last_update)
     
+    # Traiter les données
     print("\n🔄 Traitement des données...")
     resolve_session_id(df)
     df = classify_errors(df)
@@ -933,9 +798,11 @@ def main():
         }
     ).fillna("Unknown")
 
+    # Construire les tables
     print("📊 Construction des tables KPI...")
     evi = build_evi_combo_tables(df)
 
+    # Charger le mapping MAC depuis la base
     mac_lookup = pd.read_sql("SELECT * FROM Charges.mac_lookup", con=engine_kpi)
     mac_lookup.columns = [c.lower().strip() for c in mac_lookup.columns]
     mac_lookup = mac_lookup.rename(columns={"mac address": "mac", "vehicle": "Vehicle"})
@@ -946,6 +813,7 @@ def main():
     multi_attempts = build_multi_attempts_hour(df)
     suspicious_under_1kwh = build_suspicious_under_1kwh(df)
 
+    # Enrichir multi_attempts et suspicious avec MAC/Vehicle
     if not charges_mac.empty and not multi_attempts.empty:
         cm_min = charges_mac[["ID", "MAC Address", "Vehicle"]].drop_duplicates("ID", keep="last")
         multi_attempts = multi_attempts.merge(
@@ -973,6 +841,7 @@ def main():
         suspicious_under_1kwh["MAC Address"] = ""
         suspicious_under_1kwh["Vehicle"] = "Unknown"
 
+    # Préparer la table sessions
     sessions_cols = [
         "Site",
         "Name Project",
@@ -999,6 +868,7 @@ def main():
     sessions_cols = [c for c in sessions_cols if c in df.columns]
     sessions = df[sessions_cols].copy()
 
+    # Regrouper toutes les tables
     all_tables = {
         "evi_combo_long": evi["evi_combo_long"],
         "evi_combo_by_site": evi["evi_combo_by_site"],
@@ -1012,6 +882,7 @@ def main():
         "sessions": sessions,
     }
     
+    # Sauvegarder dans la base
     print("\n💾 Sauvegarde dans la base de données...")
     save_to_indicator(all_tables, incremental=True)
     
