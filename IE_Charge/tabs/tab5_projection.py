@@ -38,6 +38,36 @@ else:
         if not default_sites and site_options:
             default_sites = [site_options[0]]
 
+        # Préparer la grille complète moments/codes pour homogénéiser l'affichage
+        all_steps = (
+            sorted(
+                pd.to_numeric(evi_f["step_num"], errors="coerce")
+                .dropna()
+                .astype(int)
+                .unique()
+                .tolist()
+            )
+            if not evi_f.empty
+            else []
+        )
+        all_codes = (
+            sorted(
+                pd.to_numeric(evi_f["code_num"], errors="coerce")
+                .dropna()
+                .astype(int)
+                .unique()
+                .tolist()
+            )
+            if not evi_f.empty
+            else []
+        )
+        column_template = None
+        if all_steps and all_codes:
+            column_template = pd.MultiIndex.from_product(
+                [all_steps, all_codes],
+                names=["Moments (ligne 1)", "Codes (ligne 2)"]
+            )
+
         selected_sites = st.multiselect(
             "Sites (projection) - Maximum 2 sites",
             options=site_options,
@@ -56,6 +86,19 @@ else:
         else:
             for site in selected_sites:
                 st.markdown(f"### 📍 {site}")
+
+                site_sessions = sess[sess[SITE_COL] == site] if SITE_COL in sess.columns else pd.DataFrame()
+                if not site_sessions.empty:
+                    total_site = len(site_sessions)
+                    ok_site = int(site_sessions["is_ok"].sum()) if "is_ok" in site_sessions.columns else 0
+                    taux_site = round(ok_site / total_site * 100, 1) if total_site else 0.0
+                    st.markdown(
+                        f"**Taux de réussite du site : {taux_site:.1f}%** "
+                        f"({ok_site}/{total_site} charges réussies)"
+                    )
+                else:
+                    st.markdown("**Taux de réussite du site :** N/A (aucune session sur cette période)")
+
                 hide_zero = st.checkbox("Masquer colonnes vides (0)", key=f"hide_zeros_{site}")
 
                 evi_site = evi_f[evi_f["Site"] == site].copy()
@@ -76,13 +119,8 @@ else:
                         aggfunc="sum",
                     )
 
-                    steps = sorted({c[0] for c in pv.columns})
-                    codes = sorted({c[1] for c in pv.columns})
-                    wanted = pd.MultiIndex.from_product(
-                        [steps, codes],
-                        names=["Moments (ligne 1)", "Codes (ligne 2)"]
-                    )
-                    pv = pv.reindex(columns=wanted, fill_value=0)
+                    if column_template is not None:
+                        pv = pv.reindex(columns=column_template, fill_value=0)
 
                     pdcs = sorted(pv.index.tolist(), key=str)
                     if "__TOTAL__" in pdcs:
@@ -107,13 +145,8 @@ else:
                         aggfunc="sum",
                     )
 
-                    steps = sorted({c[0] for c in pv.columns})
-                    codes = sorted({c[1] for c in pv.columns})
-                    wanted = pd.MultiIndex.from_product(
-                        [steps, codes],
-                        names=["Moments (ligne 1)", "Codes (ligne 2)"]
-                    )
-                    pv = pv.reindex(columns=wanted, fill_value=0)
+                    if column_template is not None:
+                        pv = pv.reindex(columns=column_template, fill_value=0)
 
                     df_disp = pv.reset_index()
                     df_disp["Site / PDC"] = f"{site} (TOTAL)"
