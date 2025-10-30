@@ -731,7 +731,7 @@ def delete_old_data(table_name: str, start_date: datetime):
 def save_to_indicator(table_dict: dict, incremental: bool = True):
     """Sauvegarde les tables dans la base de données."""
     metadata = MetaData()
-    
+
     for name, df in table_dict.items():
         if name not in TABLES_TO_SAVE:
             print(f"⚠️ Table ignorée (hors périmètre) : {name}")
@@ -784,6 +784,53 @@ def save_to_indicator(table_dict: dict, incremental: bool = True):
                 )
             except Exception as e:
                 print(f"❌ Erreur insertion pour {table_name} → {e}")
+
+
+def update_kpi_evo(start_date: datetime):
+    """Met à jour la table Charges.kpi_evo avec les taux de réussite mensuels."""
+    if start_date is None:
+        start_date = datetime(2025, 2, 6)
+
+    month_floor = datetime(start_date.year, start_date.month, 1)
+    previous_month = month_floor - timedelta(days=1)
+    recalculation_start = datetime(previous_month.year, previous_month.month, 1)
+    min_mois = previous_month.year * 100 + previous_month.month
+
+    delete_stmt = text(
+        "DELETE FROM Charges.kpi_evo WHERE mois >= :min_mois"
+    )
+
+    insert_stmt = text(
+        """
+        INSERT INTO Charges.kpi_evo (Site, mois, tr)
+        SELECT
+            `Site`,
+            YEAR(`Datetime start`) * 100 + MONTH(`Datetime start`) AS mois,
+            COALESCE(
+                ROUND(
+                    100 * SUM(CASE WHEN `is_ok` = 1 THEN 1 ELSE 0 END)
+                    / NULLIF(COUNT(*), 0),
+                    2
+                ),
+                0
+            ) AS tr
+        FROM Charges.kpi_sessions
+        WHERE `Datetime start` >= :start_dt
+        GROUP BY `Site`, mois
+        ON DUPLICATE KEY UPDATE tr = VALUES(tr)
+        """
+    )
+
+    try:
+        with engine_kpi.begin() as conn:
+            conn.execute(delete_stmt, {"min_mois": min_mois})
+            conn.execute(insert_stmt, {"start_dt": recalculation_start})
+        print(
+            "✅ Table Charges.kpi_evo mise à jour"
+            f" (recalcul depuis {recalculation_start.strftime('%Y-%m-%d')})"
+        )
+    except Exception as exc:
+        print(f"⚠️ Impossible de mettre à jour Charges.kpi_evo : {exc}")
 
 
 def main():
@@ -910,11 +957,14 @@ def main():
         "charges_daily_by_site": charges_daily_by_site,
         "sessions": sessions,
     }
-    
+
     # Sauvegarder dans la base
     print("\n💾 Sauvegarde dans la base de données...")
     save_to_indicator(all_tables, incremental=True)
-    
+
+    print("\n📈 Mise à jour des KPI mensuels (kpi_evo)...")
+    update_kpi_evo(last_update)
+
     print("\n" + "=" * 80)
     print("✅ PROCESSUS TERMINÉ AVEC SUCCÈS")
     print("=" * 80)
