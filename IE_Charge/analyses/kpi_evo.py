@@ -1,9 +1,9 @@
 """Rebuild the Charges.kpi_evo table with updated success rates.
 
-This script recalculates the monthly success rate (taux de réussite) for each
-site stored in the ``Charges.kpi_sessions`` table. Charges that end with an
-error classified as "Fin de charge" are now considered successful, matching the
-new business expectation.
+This script recalculates the monthly success rate (taux de réussite) at the
+global level (all sites combined) using the ``Charges.kpi_sessions`` table.
+Charges that end with an error classified as "Fin de charge" are considered
+successful, matching the new business expectation.
 """
 
 from __future__ import annotations
@@ -78,26 +78,25 @@ def classify_success(df: pd.DataFrame) -> pd.DataFrame:
     fin_de_charge = moment.eq("fin de charge")
     df = df.copy()
     df["is_success"] = is_ok.eq(1) | (~is_ok.eq(1) & fin_de_charge)
-    df["mois"] = df["dt_start"].dt.year.mul(100).add(df["dt_start"].dt.month)
-    df["mois"] = df["mois"].astype(int)
+    df["mois"] = df["dt_start"].dt.strftime("%m-%Y")
     return df
 
 
 def aggregate_success(df: pd.DataFrame) -> pd.DataFrame:
-    """Aggregate success rate per site and month."""
+    """Aggregate the global success rate per month."""
 
     if df.empty:
         return df
 
-    grouped = (
-        df.groupby(["Site", "mois"], as_index=False)["is_success"].agg(
-            total="count", successes="sum"
-        )
+    grouped = df.groupby("mois", as_index=False)["is_success"].agg(
+        total="count", successes="sum"
     )
 
     grouped["tr"] = (
         grouped["successes"].div(grouped["total"].replace(0, pd.NA)).mul(100).round(2)
     ).fillna(0)
+
+    grouped["Site"] = "Global"
 
     return grouped[["Site", "mois", "tr"]]
 
