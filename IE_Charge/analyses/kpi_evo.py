@@ -78,7 +78,9 @@ def classify_success(df: pd.DataFrame) -> pd.DataFrame:
     fin_de_charge = moment.eq("fin de charge")
     df = df.copy()
     df["is_success"] = is_ok.eq(1) | (~is_ok.eq(1) & fin_de_charge)
-    df["mois"] = df["dt_start"].dt.strftime("%m-%Y")
+    df["mois"] = (
+        df["dt_start"].dt.year.mul(100).add(df["dt_start"].dt.month)
+    ).astype(int)
     return df
 
 
@@ -97,6 +99,7 @@ def aggregate_success(df: pd.DataFrame) -> pd.DataFrame:
     ).fillna(0)
 
     grouped["Site"] = "Global"
+    grouped["mois"] = grouped["mois"].astype(int)
 
     return grouped[["Site", "mois", "tr"]]
 
