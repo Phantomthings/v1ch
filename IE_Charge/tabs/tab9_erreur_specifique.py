@@ -3,6 +3,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
+from typing import Optional
 
 from tabs.context import get_context
 
@@ -172,29 +173,32 @@ else:
                 df_src_f = df_src_f[df_src_f["type_erreur"] == "Erreur_EVI"]
             elif code_type_tab == "Erreur_DownStream":
                 df_src_f = df_src_f[df_src_f["type_erreur"] == "Erreur_DownStream"]
-            err_sum = df_src_f.loc[~df_src_f["is_ok"]].copy()
+            def _prepare_charge_details(df: pd.DataFrame, lookup: Optional[pd.DataFrame] = None) -> pd.DataFrame:
+                work = df.copy()
 
-            if err_sum.empty:
-                st.info("Aucune charge en erreur pour le périmètre/filtre sélectionné.")
-            else:
+                if work.empty:
+                    return work
+
                 for c in ("Datetime start", "Datetime end"):
-                    if c in err_sum.columns:
-                        err_sum[c] = pd.to_datetime(err_sum[c], errors="coerce")
-                if "Energy (Kwh)" in err_sum.columns:
-                    err_sum["Energy (Kwh)"] = pd.to_numeric(err_sum["Energy (Kwh)"], errors="coerce")
+                    if c in work.columns:
+                        work[c] = pd.to_datetime(work[c], errors="coerce")
+
+                if "Energy (Kwh)" in work.columns:
+                    work["Energy (Kwh)"] = pd.to_numeric(work["Energy (Kwh)"], errors="coerce")
 
                 for c in ("SOC Start", "SOC End"):
-                    if c in err_sum.columns:
-                        err_sum[c] = pd.to_numeric(err_sum[c], errors="coerce")
+                    if c in work.columns:
+                        work[c] = pd.to_numeric(work[c], errors="coerce")
 
-                if "MAC Address" in err_sum.columns:
-                    err_sum["MAC Address"] = err_sum["MAC Address"].apply(_fmt_mac)
+                if "MAC Address" in work.columns:
+                    work["MAC Address"] = work["MAC Address"].apply(_fmt_mac)
 
                 def _etiquette(row):
                     t = str(row.get("type_erreur", "") or "")
                     m = str(row.get("moment", "") or "")
                     return f"{t} — {m}" if m else t
-                err_sum["Erreur"] = err_sum.apply(_etiquette, axis=1)
+
+                work["Erreur"] = work.apply(_etiquette, axis=1)
 
                 def _soc_evo(row):
                     s0 = row.get("SOC Start", pd.NA)
@@ -205,51 +209,96 @@ else:
                         except Exception:
                             return ""
                     return ""
-                err_sum["Évolution SOC"] = err_sum.apply(_soc_evo, axis=1)
 
-                if "ID" not in err_sum.columns:
+                work["Évolution SOC"] = work.apply(_soc_evo, axis=1)
+
+                if "ID" not in work.columns:
                     st.warning("Colonne 'ID' absente : les liens ELTO ne seront pas affichés.")
-                    err_sum["ELTO"] = ""
+                    work["ELTO"] = ""
                 else:
-                    err_sum["ELTO"] = BASE_CHARGE_URL + err_sum["ID"].astype(str).str.strip()
+                    work["ELTO"] = BASE_CHARGE_URL + work["ID"].astype(str).str.strip()
 
-                if "Vehicle" not in err_sum.columns and "ID" in err_sum.columns:
+                if "Vehicle" not in work.columns and "ID" in work.columns:
                     if (
-                        "charges_mac" in locals()
-                        and isinstance(charges_mac, pd.DataFrame)
-                        and not charges_mac.empty
-                        and {"ID", "Vehicle"}.issubset(charges_mac.columns)
+                        isinstance(lookup, pd.DataFrame)
+                        and not lookup.empty
+                        and {"ID", "Vehicle"}.issubset(lookup.columns)
                     ):
-                        veh_map = charges_mac[["ID", "Vehicle"]].drop_duplicates("ID", keep="last")
-                        err_sum = err_sum.merge(veh_map, on="ID", how="left")
-                cols_aff = ["Site", "Datetime start", "Datetime end",
-                            "Energy (Kwh)", "MAC Address",
-                            "Vehicle", "Erreur", "Évolution SOC", "ELTO"]
-                cols_aff = [c for c in cols_aff if c in err_sum.columns]
+                        veh_map = lookup[["ID", "Vehicle"]].drop_duplicates("ID", keep="last")
+                        work = work.merge(veh_map, on="ID", how="left")
 
-                out = err_sum[cols_aff].copy()
-                if "Datetime start" in out.columns:
-                    out = out.sort_values("Datetime start", ascending=False)
+                return work
 
-                out.insert(0, "#", range(1, len(out) + 1))
+            def _build_charge_table(df: pd.DataFrame) -> pd.DataFrame:
+                cols_aff = [
+                    "Site",
+                    "Datetime start",
+                    "Datetime end",
+                    "Energy (Kwh)",
+                    "MAC Address",
+                    "Vehicle",
+                    "Erreur",
+                    "Évolution SOC",
+                    "ELTO",
+                ]
+                cols_aff = [c for c in cols_aff if c in df.columns]
 
+                out_df = df[cols_aff].copy()
+                if "Datetime start" in out_df.columns:
+                    out_df = out_df.sort_values("Datetime start", ascending=False)
+
+                out_df.insert(0, "#", range(1, len(out_df) + 1))
+                return out_df
+
+            charges_lookup = None
+            if (
+                "charges_mac" in locals()
+                and isinstance(charges_mac, pd.DataFrame)
+            ):
+                charges_lookup = charges_mac
+
+            column_config_common = {
+                "ELTO": st.column_config.LinkColumn(
+                    "Lien ELTO",
+                    help="Ouvrir la session dans ELTO",
+                    display_text="🔗 Ouvrir"
+                ),
+                "Datetime start": st.column_config.DatetimeColumn("Start time", format="YYYY-MM-DD HH:mm:ss"),
+                "Datetime end":   st.column_config.DatetimeColumn("End time",   format="YYYY-MM-DD HH:mm:ss"),
+                "Energy (Kwh)":   st.column_config.NumberColumn("Energy (kWh)", format="%.3f"),
+                "MAC Address":    st.column_config.TextColumn("MacAdress"),
+                "Erreur":         st.column_config.TextColumn("Error etiquette"),
+                "Évolution SOC":  st.column_config.TextColumn("Evolution SOC"),
+            }
+
+            err_sum = df_src_f.loc[~df_src_f["is_ok"]].copy()
+            err_sum = _prepare_charge_details(err_sum, charges_lookup)
+
+            if err_sum.empty:
+                st.info("Aucune charge en erreur pour le périmètre/filtre sélectionné.")
+            else:
+                st.markdown("#### Charges en erreur")
+                out = _build_charge_table(err_sum)
                 st.data_editor(
                     out,
                     use_container_width=True,
                     hide_index=True,
-                    column_config={
-                        "ELTO": st.column_config.LinkColumn(
-                            "Lien ELTO",
-                            help="Ouvrir la session dans ELTO",
-                            display_text="🔗 Ouvrir"
-                        ),
-                        "Datetime start": st.column_config.DatetimeColumn("Start time", format="YYYY-MM-DD HH:mm:ss"),
-                        "Datetime end":   st.column_config.DatetimeColumn("End time",   format="YYYY-MM-DD HH:mm:ss"),
-                        "Energy (Kwh)":   st.column_config.NumberColumn("Energy (kWh)", format="%.3f"),
-                        "MAC Address":    st.column_config.TextColumn("MacAdress"),
-                        "Erreur":         st.column_config.TextColumn("Error etiquette"),
-                        "Évolution SOC":  st.column_config.TextColumn("Evolution SOC"),
-                    }
+                    column_config=column_config_common,
+                )
+
+            ok_sum = df_src_f.loc[df_src_f["is_ok"]].copy()
+            ok_sum = _prepare_charge_details(ok_sum, charges_lookup)
+
+            if ok_sum.empty:
+                st.info("Aucune charge OK pour le périmètre/filtre sélectionné.")
+            else:
+                st.markdown("#### Charges OK")
+                out_ok = _build_charge_table(ok_sum)
+                st.data_editor(
+                    out_ok,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config=column_config_common,
                 )
 st.divider()
 # Histogramme des occurrences par véhicule
