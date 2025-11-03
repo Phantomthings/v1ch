@@ -26,6 +26,24 @@ else:
     if "Détection" in df_alertes.columns:
         df_alertes["Détection"] = pd.to_datetime(df_alertes["Détection"], errors="coerce")
 
+        if "d1" in locals() and "d2" in locals():
+            start_dt = pd.to_datetime(locals().get("d1"))
+            end_dt = pd.to_datetime(locals().get("d2")) + pd.Timedelta(days=1) - pd.Timedelta(microseconds=1)
+            if pd.notna(start_dt) and pd.notna(end_dt):
+                df_alertes = df_alertes[df_alertes["Détection"].between(start_dt, end_dt)]
+
+    active_sites = locals().get("site_sel")
+    if active_sites and "Site" in df_alertes.columns:
+        df_alertes = df_alertes[df_alertes["Site"].isin(active_sites)]
+
+    active_types = locals().get("type_sel")
+    if active_types and "Type d'erreur" in df_alertes.columns:
+        df_alertes = df_alertes[df_alertes["Type d'erreur"].isin(active_types)]
+
+    active_moments = locals().get("moment_sel")
+    if active_moments and "Moment" in df_alertes.columns:
+        df_alertes = df_alertes[df_alertes["Moment"].isin(active_moments)]
+
     display_cols = [
         col for col in [
             "Site",
@@ -46,7 +64,11 @@ else:
     if df_alertes.empty:
         st.success("✅ Aucune alerte détectée.")
     else:
-        st.dataframe(df_alertes[display_cols], use_container_width=True)
+        st.dataframe(
+            df_alertes[display_cols],
+            use_container_width=True,
+            hide_index=True,
+        )
 """
 
 def render():
