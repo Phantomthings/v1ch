@@ -77,33 +77,26 @@ else:
         if isinstance(mask_moment, bool):
             mask_moment = pd.Series([mask_moment] * len(df_src), index=df_src.index)
         df_src_f = df_src[mask_type & mask_moment].copy()
-        missing_id = "ID" not in df_src_f.columns
-        if missing_id:
-            st.warning("Colonne 'ID' absente : les liens ELTO ne seront pas affichés.")
-
-        def _prep_sessions_table(df):
-            if df.empty:
-                return df
-
+        err_sum = df_src_f.loc[~df_src_f["is_ok"]].copy()
+        if err_sum.empty:
+            st.info("Aucune charge en erreur pour le périmètre/filtre sélectionné.")
+        else:
             for c in ("Datetime start", "Datetime end"):
-                if c in df.columns:
-                    df[c] = pd.to_datetime(df[c], errors="coerce")
-            if "Energy (Kwh)" in df.columns:
-                df["Energy (Kwh)"] = pd.to_numeric(df["Energy (Kwh)"], errors="coerce")
+                if c in err_sum.columns:
+                    err_sum[c] = pd.to_datetime(err_sum[c], errors="coerce")
+            if "Energy (Kwh)" in err_sum.columns:
+                err_sum["Energy (Kwh)"] = pd.to_numeric(err_sum["Energy (Kwh)"], errors="coerce")
 
             for c in ("SOC Start", "SOC End"):
-                if c in df.columns:
-                    df[c] = pd.to_numeric(df[c], errors="coerce")
-            if "MAC Address" in df.columns:
-                df["MAC Address"] = df["MAC Address"].apply(_fmt_mac)
-
+                if c in err_sum.columns:
+                    err_sum[c] = pd.to_numeric(err_sum[c], errors="coerce")
+            if "MAC Address" in err_sum.columns:
+                err_sum["MAC Address"] = err_sum["MAC Address"].apply(_fmt_mac)
             def _etiquette(row):
                 t = str(row.get("type_erreur", "") or "")
                 m = str(row.get("moment", "") or "")
                 return f"{t} — {m}" if m else t
-
-            df["Erreur"] = df.apply(_etiquette, axis=1)
-
+            err_sum["Erreur"] = err_sum.apply(_etiquette, axis=1)
             def _soc_evo(row):
                 s0 = row.get("SOC Start", pd.NA)
                 s1 = row.get("SOC End", pd.NA)
@@ -113,66 +106,22 @@ else:
                     except Exception:
                         return ""
                 return ""
-
-            df["Évolution SOC"] = df.apply(_soc_evo, axis=1)
-            if missing_id:
-                df["ELTO"] = ""
+            err_sum["Évolution SOC"] = err_sum.apply(_soc_evo, axis=1)
+            if "ID" not in err_sum.columns:
+                st.warning("Colonne 'ID' absente : les liens ELTO ne seront pas affichés.")
+                err_sum["ELTO"] = ""
             else:
-                df["ELTO"] = BASE_CHARGE_URL + df["ID"].astype(str).str.strip()
+                err_sum["ELTO"] = BASE_CHARGE_URL + err_sum["ID"].astype(str).str.strip()
+            cols_aff = ["ID", "Datetime start", "Datetime end", "PDC",
+                        "Energy (Kwh)", "MAC Address", "Erreur", "Évolution SOC", "ELTO"]
+            cols_aff = [c for c in cols_aff if c in err_sum.columns]
 
-            cols_aff = [
-                "ID",
-                "Datetime start",
-                "Datetime end",
-                "PDC",
-                "Energy (Kwh)",
-                "MAC Address",
-                "Erreur",
-                "Évolution SOC",
-                "ELTO",
-            ]
-            cols_aff = [c for c in cols_aff if c in df.columns]
-
-            out_df = df[cols_aff].copy()
-            if "Datetime start" in out_df.columns:
-                out_df = out_df.sort_values("Datetime start", ascending=False)
-            out_df.insert(0, "#", range(1, len(out_df) + 1))
-            return out_df
-
-        err_sum = df_src_f.loc[~df_src_f["is_ok"]].copy()
-        ok_sum = df_src_f.loc[df_src_f["is_ok"]].copy()
-
-        st.markdown("#### Charges en erreur")
-        if err_sum.empty:
-            st.info("Aucune charge en erreur pour le périmètre/filtre sélectionné.")
-        else:
-            err_table = _prep_sessions_table(err_sum)
+            out = err_sum[cols_aff].copy()
+            if "Datetime start" in out.columns:
+                out = out.sort_values("Datetime start", ascending=False)
+            out.insert(0, "#", range(1, len(out) + 1))
             st.data_editor(
-                err_table,
-                use_container_width=True,
-                hide_index=True,
-                column_config={
-                    "ELTO": st.column_config.LinkColumn(
-                        "Lien IECarge",
-                        help="Ouvrir la session dans ELTO",
-                        display_text="🔗 Ouvrir"
-                    ),
-                    "Datetime start": st.column_config.DatetimeColumn("Start time", format="YYYY-MM-DD HH:mm:ss"),
-                    "Datetime end":   st.column_config.DatetimeColumn("End time",   format="YYYY-MM-DD HH:mm:ss"),
-                    "Energy (Kwh)":   st.column_config.NumberColumn("Energy (kWh)", format="%.3f"),
-                    "MAC Address":    st.column_config.TextColumn("MacAdress"),
-                    "Erreur":         st.column_config.TextColumn("Error etiquette"),
-                    "Évolution SOC":  st.column_config.TextColumn("Evolution SOC"),
-                }
-            )
-
-        st.markdown("#### Charges OK")
-        if ok_sum.empty:
-            st.info("Aucune charge OK pour le périmètre/filtre sélectionné.")
-        else:
-            ok_table = _prep_sessions_table(ok_sum)
-            st.data_editor(
-                ok_table,
+                out,
                 use_container_width=True,
                 hide_index=True,
                 column_config={
