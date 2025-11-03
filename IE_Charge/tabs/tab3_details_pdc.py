@@ -126,7 +126,7 @@ else:
                 hide_index=True,
                 column_config={
                     "ELTO": st.column_config.LinkColumn(
-                        "Lien ELTO",
+                        "Lien IECarge",
                         help="Ouvrir la session dans ELTO",
                         display_text="🔗 Ouvrir"
                     ),
@@ -394,4 +394,3 @@ def render():
     # remove None entries
     local_vars = {k: v for k, v in local_vars.items() if v is not None}
     exec(TAB_CODE, globals_dict, local_vars)
-
