@@ -404,14 +404,52 @@ if "moment" in sess.columns:
     opts = sorted(sess["moment"].dropna().unique().tolist())
     moment_options = [m for m in MOMENT_ORDER if m in opts] + [m for m in opts if m not in MOMENT_ORDER]
 
-if "type_sel" not in st.session_state or not st.session_state["type_sel"]:
-    if type_options:
-        st.session_state["type_sel"] = type_options[:]
-if "moment_sel" not in st.session_state or not st.session_state["moment_sel"]:
-    if moment_options:
-        st.session_state["moment_sel"] = moment_options[:]
+TYPE_MEMORY_KEY = "__type_sel_memory__"
+MOMENT_MEMORY_KEY = "__moment_sel_memory__"
+
+
+def _sync_multiselect_state(key: str, options: list[str], memory_key: str) -> None:
+    """Ensure a multiselect keeps previous choices even if options vary."""
+
+    if not options:
+        st.session_state.setdefault(memory_key, [])
+        st.session_state[key] = []
+        return
+
+    if memory_key not in st.session_state:
+        st.session_state[memory_key] = options[:]
+
+    memory = st.session_state[memory_key]
+    current = st.session_state.get(key, memory)
+
+    filtered_current = [val for val in current if val in options]
+
+    if filtered_current:
+        st.session_state[key] = filtered_current[:]
+        st.session_state[memory_key] = filtered_current[:]
+        return
+
+    filtered_memory = [val for val in memory if val in options]
+    st.session_state[key] = filtered_memory[:]
+    if filtered_memory:
+        st.session_state[memory_key] = filtered_memory[:]
+
+
+def _make_memory_updater(key: str, memory_key: str):
+    def _update():
+        st.session_state[memory_key] = st.session_state.get(key, [])[:]
+
+    return _update
+
+
+_sync_multiselect_state("type_sel", type_options, TYPE_MEMORY_KEY)
+_sync_multiselect_state("moment_sel", moment_options, MOMENT_MEMORY_KEY)
+
 if moment_options:
     st.session_state["__moment_order__"] = moment_options[:]
+
+_update_type_memory = _make_memory_updater("type_sel", TYPE_MEMORY_KEY)
+_update_moment_memory = _make_memory_updater("moment_sel", MOMENT_MEMORY_KEY)
 
 GROUPS = {
     "avant_charge_toggle": {"Init", "Lock Connector", "CableCheck"},
@@ -429,24 +467,14 @@ def _on_toggle(key):
         cur -= group
     order = st.session_state.get("__moment_order__", list(cur))
     st.session_state["moment_sel"] = [m for m in order if m in cur]
-
-if "type_sel" in st.session_state:
-    st.session_state["type_sel"] = [
-        val for val in st.session_state["type_sel"]
-        if val in type_options
-    ]
-
-if "moment_sel" in st.session_state:
-    st.session_state["moment_sel"] = [
-        val for val in st.session_state["moment_sel"]
-        if val in moment_options
-    ]
+    _update_moment_memory()
 
 with row_type:
     st.multiselect(
         "Type d'erreur (global)",
         options=type_options,
         key="type_sel",
+        on_change=_update_type_memory,
         help="Filtre global sur le type d'erreur (ex: Erreur_EVI, Erreur_DownStream)."
     )
 
@@ -455,6 +483,7 @@ with row_moment:
         "Moment d'erreur",
         options=moment_options,
         key="moment_sel",
+        on_change=_update_moment_memory,
         help="S'applique seulement aux erreurs EVI et DS"
     )
 
