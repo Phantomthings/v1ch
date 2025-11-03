@@ -20,6 +20,7 @@ from tabs import (
     tab8_erreur_moment,
     tab9_erreur_specifique,
     tab10_alertes,
+    tab11_evolution,
 )
 
 # COULEURS 
@@ -189,7 +190,7 @@ sites = sorted(sessions[SITE_COL].dropna().unique().tolist())
 if "site_sel" not in st.session_state:
     st.session_state.site_sel = sites[:] 
 
-# Flag pour limiter les sites (doit être avant le widget)
+# Flag pour limiter les sites
 if "limit_sites_to_20" not in st.session_state:
     st.session_state.limit_sites_to_20 = False
 
@@ -232,7 +233,8 @@ with c1:
     if st.button("✅ Tous les sites", key="btn_all_sites", use_container_width=True):
         st.session_state.site_sel = sites[:]   
         st.rerun()
-
+if "site_sel" not in st.session_state:
+    st.session_state.site_sel = sites[:]
 with c2:
     st.multiselect(
         "Sites",
@@ -242,15 +244,18 @@ with c2:
         help="Choisissez un ou plusieurs sites",
     )
 
-if len(st.session_state.site_sel) == 0:
-    st.session_state.site_sel = sites[:]
 
 # Ligne 2: Mode de période (4 boutons)
 st.markdown("#### 📅 Période d'analyse")
-col_mode_full, col_mode_j1, col_mode_week, col_mode_all = st.columns(4)
+col_mode_day, col_mode_full, col_mode_j1, col_mode_week, col_mode_all = st.columns(5)
+
+with col_mode_day:
+    if st.button("📅 Focus Jour", key="btn_focus_jour", use_container_width=True, type="primary" if st.session_state.date_mode == "focus_jour" else "secondary"):
+        st.session_state.date_mode = "focus_jour"
+        st.rerun()
 
 with col_mode_full:
-    if st.button("📅 Mois Focus", key="btn_mois_complet", use_container_width=True, type="primary" if st.session_state.date_mode == "mois_complet" else "secondary"):
+    if st.button("📅 Focus Mois", key="btn_mois_complet", use_container_width=True, type="primary" if st.session_state.date_mode == "mois_complet" else "secondary"):
         st.session_state.date_mode = "mois_complet"
         st.rerun()
 
@@ -271,7 +276,16 @@ with col_mode_all:
         st.session_state.limit_sites_to_20 = True
         st.rerun()
 
-# Ligne 3: Sélection du mois (UNIQUEMENT si mode = mois_complet)
+# Ligne 3: Sélection du mois
+if st.session_state.date_mode == "focus_jour":
+    st.session_state.focus_day = st.date_input(
+        "📅 Sélectionner une date",
+        value=today,
+        min_value=today - datetime.timedelta(days=365 * 5),
+        max_value=today,
+        key="focus_day_input"
+    )
+
 if st.session_state.date_mode == "mois_complet":
     col_year, col_month = st.columns([1, 3])
 
@@ -329,6 +343,11 @@ elif date_mode == "toute_periode":
         d1 = today
         d2 = today
         mode_label = "📅 Toute la période : Aucune donnée disponible"
+elif date_mode == "focus_jour":
+    focus_day = st.session_state.get("focus_day", today)
+    d1 = focus_day
+    d2 = focus_day
+    mode_label = f"📅 Focus Jour : {focus_day.strftime('%d/%m/%Y')}"
 
 else:  # mois_complet
     year = st.session_state.focus_year
@@ -341,13 +360,13 @@ else:  # mois_complet
 # Affichage de la période active avec avertissement si limite de sites atteinte
 if date_mode == "toute_periode" and len(st.session_state.site_sel) == 20:
     st.info(mode_label)
-    st.warning("⚠️ Limite de 20 sites atteinte pour l'analyse sur toute la période. Sélectionnez moins de sites ou changez de période.")
+    st.warning("⚠️ Par défaut, seuls les 20 sites avec l’activité la plus élevée sont pré-sélectionnés pour optimiser les performances. Vous pouvez étendre la sélection pour inclure l’ensemble des sites si nécessaire.")
 else:
     st.info(mode_label)
 
 # ========== FILTRAGE DES DONNÉES ==========
 d1_ts = pd.Timestamp(d1)
-d2_ts = pd.Timestamp(d2) + pd.Timedelta(days=1)  # Inclure le dernier jour
+d2_ts = pd.Timestamp(d2) + pd.Timedelta(days=1) 
 
 site_mask = sessions[SITE_COL].isin(st.session_state.site_sel)
 mask = site_mask & dt_start.ge(d1_ts) & dt_start.lt(d2_ts)
@@ -496,17 +515,18 @@ context.__dict__.clear()
 context.__dict__.update({k: v for k, v in locals().items() if k != "context"})
 
 # TABS
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
-    "📋 Générale", 
-    "🏢 Comparaison par site (Activité)", 
-    "🔌 Détails Site (par PDC)", 
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11 = st.tabs([
+    "📋 Générale",
+    "🏢 Comparaison par site (Activité)",
+    "🔌 Détails Site (par PDC)",
     "📈 Statistiques",
-    "📑 Projection pivot", 
-    "⚠️ Analyse tentatives multiples", 
-    "⚠️ Transactions suspectes", 
-    "🔍 Analyse Erreur Moment", 
-    "🔍 Analyse Erreur Spécifique", 
-    "⚠️ Alertes"
+    "📑 Projection pivot",
+    "⚠️ Analyse tentatives multiples",
+    "⚠️ Transactions suspectes",
+    "🔍 Analyse Erreur Moment",
+    "🔍 Analyse Erreur Spécifique",
+    "⚠️ Alertes",
+    "📈 Evolution",
 ])
 
 stats_all = tables.get("stats_global_all", pd.DataFrame())
@@ -534,3 +554,5 @@ with tab9:
     tab9_erreur_specifique.render()
 with tab10:
     tab10_alertes.render()
+with tab11:
+    tab11_evolution.render()
