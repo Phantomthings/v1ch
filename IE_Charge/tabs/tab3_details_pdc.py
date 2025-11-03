@@ -77,26 +77,32 @@ else:
         if isinstance(mask_moment, bool):
             mask_moment = pd.Series([mask_moment] * len(df_src), index=df_src.index)
         df_src_f = df_src[mask_type & mask_moment].copy()
-        err_sum = df_src_f.loc[~df_src_f["is_ok"]].copy()
-        if err_sum.empty:
-            st.info("Aucune charge en erreur pour le périmètre/filtre sélectionné.")
-        else:
+        warned_missing_id = False
+
+        def _prepare_summary(source: pd.DataFrame):
+            work = source.copy()
+            if work.empty:
+                return work, False
+
             for c in ("Datetime start", "Datetime end"):
-                if c in err_sum.columns:
-                    err_sum[c] = pd.to_datetime(err_sum[c], errors="coerce")
-            if "Energy (Kwh)" in err_sum.columns:
-                err_sum["Energy (Kwh)"] = pd.to_numeric(err_sum["Energy (Kwh)"], errors="coerce")
+                if c in work.columns:
+                    work[c] = pd.to_datetime(work[c], errors="coerce")
+            if "Energy (Kwh)" in work.columns:
+                work["Energy (Kwh)"] = pd.to_numeric(work["Energy (Kwh)"], errors="coerce")
 
             for c in ("SOC Start", "SOC End"):
-                if c in err_sum.columns:
-                    err_sum[c] = pd.to_numeric(err_sum[c], errors="coerce")
-            if "MAC Address" in err_sum.columns:
-                err_sum["MAC Address"] = err_sum["MAC Address"].apply(_fmt_mac)
+                if c in work.columns:
+                    work[c] = pd.to_numeric(work[c], errors="coerce")
+            if "MAC Address" in work.columns:
+                work["MAC Address"] = work["MAC Address"].apply(_fmt_mac)
+
             def _etiquette(row):
                 t = str(row.get("type_erreur", "") or "")
                 m = str(row.get("moment", "") or "")
                 return f"{t} — {m}" if m else t
-            err_sum["Erreur"] = err_sum.apply(_etiquette, axis=1)
+
+            work["Erreur"] = work.apply(_etiquette, axis=1)
+
             def _soc_evo(row):
                 s0 = row.get("SOC Start", pd.NA)
                 s1 = row.get("SOC End", pd.NA)
@@ -106,37 +112,69 @@ else:
                     except Exception:
                         return ""
                 return ""
-            err_sum["Évolution SOC"] = err_sum.apply(_soc_evo, axis=1)
-            if "ID" not in err_sum.columns:
-                st.warning("Colonne 'ID' absente : les liens ELTO ne seront pas affichés.")
-                err_sum["ELTO"] = ""
+
+            work["Évolution SOC"] = work.apply(_soc_evo, axis=1)
+
+            missing_id = "ID" not in work.columns
+            if missing_id:
+                work["ELTO"] = ""
             else:
-                err_sum["ELTO"] = BASE_CHARGE_URL + err_sum["ID"].astype(str).str.strip()
+                work["ELTO"] = BASE_CHARGE_URL + work["ID"].astype(str).str.strip()
+
             cols_aff = ["ID", "Datetime start", "Datetime end", "PDC",
                         "Energy (Kwh)", "MAC Address", "Erreur", "Évolution SOC", "ELTO"]
-            cols_aff = [c for c in cols_aff if c in err_sum.columns]
+            cols_aff = [c for c in cols_aff if c in work.columns]
 
-            out = err_sum[cols_aff].copy()
+            out = work[cols_aff].copy()
             if "Datetime start" in out.columns:
                 out = out.sort_values("Datetime start", ascending=False)
             out.insert(0, "#", range(1, len(out) + 1))
+            return out, missing_id
+
+        column_config = {
+            "ELTO": st.column_config.LinkColumn(
+                "Lien IECarge",
+                help="Ouvrir la session dans ELTO",
+                display_text="🔗 Ouvrir"
+            ),
+            "Datetime start": st.column_config.DatetimeColumn("Start time", format="YYYY-MM-DD HH:mm:ss"),
+            "Datetime end":   st.column_config.DatetimeColumn("End time",   format="YYYY-MM-DD HH:mm:ss"),
+            "Energy (Kwh)":   st.column_config.NumberColumn("Energy (kWh)", format="%.3f"),
+            "MAC Address":    st.column_config.TextColumn("MacAdress"),
+            "Erreur":         st.column_config.TextColumn("Error etiquette"),
+            "Évolution SOC":  st.column_config.TextColumn("Evolution SOC"),
+        }
+
+        st.markdown("#### Charges en erreur")
+        err_sum = df_src_f.loc[~df_src_f["is_ok"]].copy()
+        if err_sum.empty:
+            st.info("Aucune charge en erreur pour le périmètre/filtre sélectionné.")
+        else:
+            out_err, missing_id = _prepare_summary(err_sum)
+            if missing_id and not warned_missing_id:
+                st.warning("Colonne 'ID' absente : les liens ELTO ne seront pas affichés.")
+                warned_missing_id = True
             st.data_editor(
-                out,
+                out_err,
                 use_container_width=True,
                 hide_index=True,
-                column_config={
-                    "ELTO": st.column_config.LinkColumn(
-                        "Lien IECarge",
-                        help="Ouvrir la session dans ELTO",
-                        display_text="🔗 Ouvrir"
-                    ),
-                    "Datetime start": st.column_config.DatetimeColumn("Start time", format="YYYY-MM-DD HH:mm:ss"),
-                    "Datetime end":   st.column_config.DatetimeColumn("End time",   format="YYYY-MM-DD HH:mm:ss"),
-                    "Energy (Kwh)":   st.column_config.NumberColumn("Energy (kWh)", format="%.3f"),
-                    "MAC Address":    st.column_config.TextColumn("MacAdress"),
-                    "Erreur":         st.column_config.TextColumn("Error etiquette"),
-                    "Évolution SOC":  st.column_config.TextColumn("Evolution SOC"),
-                }
+                column_config=column_config
+            )
+
+        st.markdown("#### Charges OK")
+        ok_sum = df_src_f.loc[df_src_f["is_ok"]].copy()
+        if ok_sum.empty:
+            st.info("Aucune charge OK pour le périmètre/filtre sélectionné.")
+        else:
+            out_ok, missing_id = _prepare_summary(ok_sum)
+            if missing_id and not warned_missing_id:
+                st.warning("Colonne 'ID' absente : les liens ELTO ne seront pas affichés.")
+                warned_missing_id = True
+            st.data_editor(
+                out_ok,
+                use_container_width=True,
+                hide_index=True,
+                column_config=column_config
             )
 
 # KPI PDC 
