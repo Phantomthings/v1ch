@@ -92,13 +92,17 @@ def detect_alerts_from_sess_kpi(sess_kpi, SITE_COL):
     
     print(f"⚠️  {len(errors_only)} erreurs détectées")
     
+    if SITE_COL not in errors_only.columns:
+        print(f"❌ Colonne site '{SITE_COL}' introuvable dans les données - aucune alerte générée")
+        return []
+
     errors_only["Datetime start"] = pd.to_datetime(errors_only["Datetime start"], errors="coerce")
-    errors_only = errors_only.dropna(subset=["Datetime start", "PDC", "type_erreur"])
-    errors_only = errors_only.sort_values(["PDC", "type_erreur", "Datetime start"]).reset_index()
+    errors_only = errors_only.dropna(subset=["Datetime start", SITE_COL, "PDC", "type_erreur"])
+    errors_only = errors_only.sort_values([SITE_COL, "PDC", "type_erreur", "Datetime start"]).reset_index()
 
     alert_rows = []
 
-    for (pdc, err_type), group in errors_only.groupby(["PDC", "type_erreur"]):
+    for (site, pdc, err_type), group in errors_only.groupby([SITE_COL, "PDC", "type_erreur"]):
         times = group["Datetime start"].reset_index(drop=True)
         idxs = group["index"].reset_index(drop=True)
         
@@ -119,7 +123,7 @@ def detect_alerts_from_sess_kpi(sess_kpi, SITE_COL):
                 row = sess_kpi.loc[idx3]
 
                 alert_rows.append({
-                    "Site": row.get(SITE_COL, "—"),
+                    "Site": site,
                     "PDC": pdc,
                     "Type d'erreur": err_type,
                     "Détection": t0,
