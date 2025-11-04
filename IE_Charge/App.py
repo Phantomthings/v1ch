@@ -222,6 +222,23 @@ if "focus_year" not in st.session_state:
     st.session_state.focus_year = today.year
 if "focus_month" not in st.session_state:
     st.session_state.focus_month = today.month
+if "focus_day" not in st.session_state:
+    st.session_state.focus_day = today
+
+TYPE_MEMORY_KEY = "__type_sel_memory__"
+MOMENT_MEMORY_KEY = "__moment_sel_memory__"
+
+
+def reset_error_filters() -> None:
+    """Réinitialise les filtres d'erreurs et leurs mémoires associées."""
+
+    st.session_state.type_sel = []
+    st.session_state.moment_sel = []
+    st.session_state[TYPE_MEMORY_KEY] = []
+    st.session_state[MOMENT_MEMORY_KEY] = []
+    st.session_state.avant_charge_toggle = False
+    st.session_state.charge_toggle = False
+    st.session_state.fin_charge_toggle = False
 
 # ========== FILTRES ==========
 st.markdown("### 🎯 Filtres")
@@ -252,41 +269,52 @@ col_mode_day, col_mode_full, col_mode_j1, col_mode_week, col_mode_all = st.colum
 with col_mode_day:
     if st.button("📅 Focus Jour", key="btn_focus_jour", use_container_width=True, type="primary" if st.session_state.date_mode == "focus_jour" else "secondary"):
         st.session_state.date_mode = "focus_jour"
+        reset_error_filters()
         st.rerun()
 
 with col_mode_full:
     if st.button("📅 Focus Mois", key="btn_mois_complet", use_container_width=True, type="primary" if st.session_state.date_mode == "mois_complet" else "secondary"):
         st.session_state.date_mode = "mois_complet"
+        reset_error_filters()
         st.rerun()
 
 with col_mode_j1:
     if st.button("📅 J-1 (Hier)", key="btn_j_minus_1", use_container_width=True, type="primary" if st.session_state.date_mode == "j_minus_1" else "secondary"):
         st.session_state.date_mode = "j_minus_1"
+        reset_error_filters()
         st.rerun()
 
 with col_mode_week:
     if st.button("📅 Semaine -1", key="btn_semaine_minus_1", use_container_width=True, type="primary" if st.session_state.date_mode == "semaine_minus_1" else "secondary"):
         st.session_state.date_mode = "semaine_minus_1"
+        reset_error_filters()
         st.rerun()
 
 with col_mode_all:
     if st.button("📅 Toute la période", key="btn_all_period", use_container_width=True, type="primary" if st.session_state.date_mode == "toute_periode" else "secondary"):
         st.session_state.date_mode = "toute_periode"
+        reset_error_filters()
         # Activer le flag pour limiter à 20 sites au prochain rerun
         st.session_state.limit_sites_to_20 = True
         st.rerun()
 
 # Ligne 3: Sélection du mois
 if st.session_state.date_mode == "focus_jour":
+    prev_day = st.session_state.get("focus_day", today)
     st.session_state.focus_day = st.date_input(
         "📅 Sélectionner une date",
-        value=today,
+        value=prev_day,
         min_value=today - datetime.timedelta(days=365 * 5),
         max_value=today,
         key="focus_day_input"
     )
+    if prev_day != st.session_state.focus_day:
+        reset_error_filters()
+        st.rerun()
 
 if st.session_state.date_mode == "mois_complet":
+    prev_year = st.session_state.focus_year
+    prev_month = st.session_state.focus_month
     col_year, col_month = st.columns([1, 3])
 
     with col_year:
@@ -308,9 +336,13 @@ if st.session_state.date_mode == "mois_complet":
             horizontal=True,
             key="focus_month_radio"
         )
-        
+
         report_month = month_abbr.index(report_month_str) + 1
         st.session_state.focus_month = report_month
+
+    if prev_year != st.session_state.focus_year or prev_month != st.session_state.focus_month:
+        reset_error_filters()
+        st.rerun()
 
 # ========== CALCUL DES DATES SELON LE MODE ==========
 date_mode = st.session_state.date_mode
@@ -403,9 +435,6 @@ if "type_erreur" in sess.columns:
 if "moment" in sess.columns:
     opts = sorted(sess["moment"].dropna().unique().tolist())
     moment_options = [m for m in MOMENT_ORDER if m in opts] + [m for m in opts if m not in MOMENT_ORDER]
-
-TYPE_MEMORY_KEY = "__type_sel_memory__"
-MOMENT_MEMORY_KEY = "__moment_sel_memory__"
 
 
 def _sync_multiselect_state(key: str, options: list[str], memory_key: str) -> None:
