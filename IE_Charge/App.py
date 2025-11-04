@@ -227,18 +227,7 @@ if "focus_day" not in st.session_state:
 
 TYPE_MEMORY_KEY = "__type_sel_memory__"
 MOMENT_MEMORY_KEY = "__moment_sel_memory__"
-
-
-def reset_error_filters() -> None:
-    """Réinitialise les filtres d'erreurs et leurs mémoires associées."""
-
-    st.session_state.type_sel = []
-    st.session_state.moment_sel = []
-    st.session_state[TYPE_MEMORY_KEY] = []
-    st.session_state[MOMENT_MEMORY_KEY] = []
-    st.session_state.avant_charge_toggle = False
-    st.session_state.charge_toggle = False
-    st.session_state.fin_charge_toggle = False
+LAST_MOMENT_OPTIONS_KEY = "__moment_options_snapshot__"
 
 # ========== FILTRES ==========
 st.markdown("### 🎯 Filtres")
@@ -269,31 +258,26 @@ col_mode_day, col_mode_full, col_mode_j1, col_mode_week, col_mode_all = st.colum
 with col_mode_day:
     if st.button("📅 Focus Jour", key="btn_focus_jour", use_container_width=True, type="primary" if st.session_state.date_mode == "focus_jour" else "secondary"):
         st.session_state.date_mode = "focus_jour"
-        reset_error_filters()
         st.rerun()
 
 with col_mode_full:
     if st.button("📅 Focus Mois", key="btn_mois_complet", use_container_width=True, type="primary" if st.session_state.date_mode == "mois_complet" else "secondary"):
         st.session_state.date_mode = "mois_complet"
-        reset_error_filters()
         st.rerun()
 
 with col_mode_j1:
     if st.button("📅 J-1 (Hier)", key="btn_j_minus_1", use_container_width=True, type="primary" if st.session_state.date_mode == "j_minus_1" else "secondary"):
         st.session_state.date_mode = "j_minus_1"
-        reset_error_filters()
         st.rerun()
 
 with col_mode_week:
     if st.button("📅 Semaine -1", key="btn_semaine_minus_1", use_container_width=True, type="primary" if st.session_state.date_mode == "semaine_minus_1" else "secondary"):
         st.session_state.date_mode = "semaine_minus_1"
-        reset_error_filters()
         st.rerun()
 
 with col_mode_all:
     if st.button("📅 Toute la période", key="btn_all_period", use_container_width=True, type="primary" if st.session_state.date_mode == "toute_periode" else "secondary"):
         st.session_state.date_mode = "toute_periode"
-        reset_error_filters()
         # Activer le flag pour limiter à 20 sites au prochain rerun
         st.session_state.limit_sites_to_20 = True
         st.rerun()
@@ -308,9 +292,6 @@ if st.session_state.date_mode == "focus_jour":
         max_value=today,
         key="focus_day_input"
     )
-    if prev_day != st.session_state.focus_day:
-        reset_error_filters()
-        st.rerun()
 
 if st.session_state.date_mode == "mois_complet":
     prev_year = st.session_state.focus_year
@@ -328,7 +309,7 @@ if st.session_state.date_mode == "mois_complet":
     with col_month:
         month_abbr = list(calendar.month_abbr[1:])
         current_month_idx = st.session_state.focus_month - 1
-        
+
         report_month_str = st.radio(
             "Mois",
             options=month_abbr,
@@ -341,7 +322,6 @@ if st.session_state.date_mode == "mois_complet":
         st.session_state.focus_month = report_month
 
     if prev_year != st.session_state.focus_year or prev_month != st.session_state.focus_month:
-        reset_error_filters()
         st.rerun()
 
 # ========== CALCUL DES DATES SELON LE MODE ==========
@@ -485,6 +465,20 @@ GROUPS = {
     "charge_toggle": {"Charge"},
     "fin_charge_toggle": {"Fin de charge"},
 }
+
+
+def _sync_toggle_state(options: list[str]) -> None:
+    """Aligne l'état des toggles sur les valeurs réellement disponibles."""
+
+    previous_options = st.session_state.get(LAST_MOMENT_OPTIONS_KEY)
+    if previous_options != options:
+        current_moments = set(st.session_state.get("moment_sel", []))
+        for toggle_key, group in GROUPS.items():
+            st.session_state[toggle_key] = group.issubset(current_moments)
+    st.session_state[LAST_MOMENT_OPTIONS_KEY] = options[:]
+
+
+_sync_toggle_state(moment_options)
 
 def _on_toggle(key):
     group = GROUPS[key]
