@@ -420,33 +420,62 @@ if "moment" in sess.columns:
 def _sync_multiselect_state(key: str, options: list[str], memory_key: str) -> None:
     """Ensure a multiselect keeps previous choices even if options vary."""
 
+    last_options_key = f"{memory_key}__last_options__"
+    select_all_key = f"{memory_key}__select_all__"
+
     if not options:
         st.session_state.setdefault(memory_key, [])
         st.session_state[key] = []
+        st.session_state[last_options_key] = []
+        st.session_state[select_all_key] = False
         return
+
+    previous_options = st.session_state.get(last_options_key, options[:])
 
     if memory_key not in st.session_state:
         st.session_state[memory_key] = options[:]
 
+    if select_all_key not in st.session_state:
+        st.session_state[select_all_key] = True
+
     memory = st.session_state[memory_key]
-    current = st.session_state.get(key, memory)
+
+    if key in st.session_state:
+        current = st.session_state[key]
+    else:
+        current = memory
 
     filtered_current = [val for val in current if val in options]
-
-    if filtered_current:
-        st.session_state[key] = filtered_current[:]
-        st.session_state[memory_key] = filtered_current[:]
-        return
-
     filtered_memory = [val for val in memory if val in options]
-    st.session_state[key] = filtered_memory[:]
-    if filtered_memory:
-        st.session_state[memory_key] = filtered_memory[:]
+
+    select_all_prev = st.session_state.get(select_all_key, False)
+    previous_set = set(previous_options)
+    options_set = set(options)
+
+    if select_all_prev and options_set.issuperset(previous_set):
+        new_selection = options[:]
+    elif key in st.session_state and not st.session_state[key]:
+        new_selection = []
+    elif filtered_current:
+        new_selection = filtered_current[:]
+    elif filtered_memory:
+        new_selection = filtered_memory[:]
+    else:
+        new_selection = options[:]
+
+    st.session_state[key] = new_selection[:]
+    st.session_state[memory_key] = new_selection[:]
+    st.session_state[last_options_key] = options[:]
+    st.session_state[select_all_key] = len(new_selection) == len(options) and bool(options)
+    st.session_state[f"{memory_key}__options__"] = options[:]
 
 
 def _make_memory_updater(key: str, memory_key: str):
     def _update():
-        st.session_state[memory_key] = st.session_state.get(key, [])[:]
+        selection = st.session_state.get(key, [])[:]
+        st.session_state[memory_key] = selection
+        options = st.session_state.get(f"{memory_key}__last_options__", [])
+        st.session_state[f"{memory_key}__select_all__"] = len(selection) == len(options) and bool(options)
 
     return _update
 
