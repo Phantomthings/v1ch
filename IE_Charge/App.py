@@ -422,12 +422,14 @@ def _sync_multiselect_state(key: str, options: list[str], memory_key: str) -> No
 
     last_options_key = f"{memory_key}__last_options__"
     select_all_key = f"{memory_key}__select_all__"
+    full_memory_key = f"{memory_key}__full_memory__"
 
     if not options:
         st.session_state.setdefault(memory_key, [])
         st.session_state[key] = []
         st.session_state[last_options_key] = []
         st.session_state[select_all_key] = False
+        st.session_state.setdefault(full_memory_key, st.session_state.get(memory_key, [])[:])
         return
 
     previous_options = st.session_state.get(last_options_key, options[:])
@@ -438,6 +440,13 @@ def _sync_multiselect_state(key: str, options: list[str], memory_key: str) -> No
     if select_all_key not in st.session_state:
         st.session_state[select_all_key] = True
 
+    full_memory = st.session_state.get(full_memory_key)
+    if full_memory is None:
+        default_pref = st.session_state.get(memory_key, options[:])
+        full_memory = default_pref[:]
+    else:
+        full_memory = list(full_memory)
+
     memory = st.session_state[memory_key]
 
     if key in st.session_state:
@@ -446,7 +455,10 @@ def _sync_multiselect_state(key: str, options: list[str], memory_key: str) -> No
         current = memory
 
     filtered_current = [val for val in current if val in options]
-    filtered_memory = [val for val in memory if val in options]
+    filtered_memory = [val for val in full_memory if val in options]
+
+    if not filtered_memory and options:
+        filtered_memory = options[:]
 
     select_all_prev = st.session_state.get(select_all_key, False)
     previous_set = set(previous_options)
@@ -469,6 +481,14 @@ def _sync_multiselect_state(key: str, options: list[str], memory_key: str) -> No
     st.session_state[select_all_key] = len(new_selection) == len(options) and bool(options)
     st.session_state[f"{memory_key}__options__"] = options[:]
 
+    unavailable_preserved = [val for val in full_memory if val not in options]
+    new_full_memory = unavailable_preserved[:]
+    for val in new_selection:
+        if val not in new_full_memory:
+            new_full_memory.append(val)
+
+    st.session_state[full_memory_key] = new_full_memory
+
 
 def _make_memory_updater(key: str, memory_key: str):
     def _update():
@@ -476,6 +496,15 @@ def _make_memory_updater(key: str, memory_key: str):
         st.session_state[memory_key] = selection
         options = st.session_state.get(f"{memory_key}__last_options__", [])
         st.session_state[f"{memory_key}__select_all__"] = len(selection) == len(options) and bool(options)
+        full_memory_key = f"{memory_key}__full_memory__"
+        prev_full_memory = list(st.session_state.get(full_memory_key, []))
+        unavailable_preserved = [val for val in prev_full_memory if val not in options]
+        new_full_memory = unavailable_preserved[:]
+        for val in selection:
+            if val not in new_full_memory:
+                new_full_memory.append(val)
+
+        st.session_state[full_memory_key] = new_full_memory
 
     return _update
 
