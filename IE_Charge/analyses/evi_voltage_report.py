@@ -1,47 +1,8 @@
-"""Generate a report on EVI voltage profiles for specific charging errors.
-
-This script extracts every charging session that raised the EVI error code 84
-at step/moment 7, fetches the associated output voltage signal from InfluxDB
-and classifies the behaviour of the signal. The final result is exported as an
-Excel workbook so that the data can easily be shared with the operations team.
-
-Usage (examples)
-----------------
-
-.. code-block:: bash
-
-    # Analyse the full history and store the Excel file in the default path
-    python -m analyses.evi_voltage_report
-
-    # Restrict the analysis to a specific period and customise the output path
-    python -m analyses.evi_voltage_report --start 2025-02-01 --end 2025-02-10 \
-        --output exports/evi_feb_2025.xlsx
-
-The InfluxDB connection relies on the following environment variables. When a
-variable is absent the default value listed below is used:
-
-``INFLUX_HOST`` (tsdbe.nidec-asi-online.com)
-    Server hostname.
-``INFLUX_PORT`` (443)
-    HTTPS port.
-``INFLUX_USER`` (nw)
-    Database username.
-``INFLUX_PW`` (at3Dd94Yp8BT4Sh!)
-    Database password.
-``INFLUX_DB`` (signals)
-    Database name.
-``INFLUX_MEAS`` (fastcharge)
-    Measurement name that stores the signals.
-``INFLUX_TAG_PROJECT`` (project)
-    Tag storing the project/site identifier.
-
-The MySQL credentials are the same ones already used in ``kpi_sql.py``.
-"""
-
 from __future__ import annotations
 
 import argparse
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterable, Iterator, List, Optional, Sequence
@@ -51,8 +12,34 @@ import pandas as pd
 import requests
 from sqlalchemy import create_engine
 
-from .kpi_sql import DB_CONFIG_CHARGE, SITE_MAP
 
+SITE_MAP = {
+    "7571": "Orignolles",
+    "7796": "Meru",
+    "7797": "Charleval",
+    "7798": "Triel",
+    "7800": "Saujon",
+    "7803": "Cierzac",
+    "7804": "Os Marsillon",
+    "7809": "St Pere en retz",
+    "7812": "Hagetmau",
+    "7813": "Biscarosse",
+    "7814": "Auriolles",
+    "7818": "Verneuil",
+    "7819": "Allaire",
+    "7825": "Vezin",
+    "7828": "Pontchateau",
+    "7833": "Pontfaverger",
+    "001": "Baud", "003": "Maurs", "050": "Mezidon", "051": "Derval", "054": "Campagne", "057": "Mailly le Chateau", "062": "Winnezeele", "063": "Diges", "065": "Vernouillet", "067": "Orbec", "071": "St Renan", "079": "Molompize", "081": "Carquefou", "083": "Vaupillon", "085": "Pleumartin", "086": "Caumont sur Aure", "087": "Getigne", "088": "Chinon", "091": "La Roche sur Yon", "093": "Aubigne sur Layon", "094": "Bonvillet", "096": "Rambervillers", "099": "Blere", "100": "Plouasne", "108": "Champniers", "112": "Nissan Lez Enserune", "114": "Combourg", "115": "Vimoutiers", "118": "Beaumont de Lomagne", "121": "Sueves", "122": "Maen Roch", "124": "St Leon sur L Isle", "125": "Mirecourt", "128": "La Voge les Bains", "130": "Amanvillers", "131": "Guerlesquin", "134": "Guerande", "135": "Riscle", "139": "Avrille", "142": "Domfront", "149": "Couesmes", "156": "Ste Catherine", "160": "Andel", "161": "Chazey Bons", "163": "Lauzerte", "165": "Trie la ville", "166": "Hambach", "167": "Beaugency", "168": "Carcassonne", "174": "Sable sur Sarthe", "179": "Taden", "184": "Rue", "185": "Quevilloncourt", "187": "St Victor de Morestel", "191": "St Hilaire du Harcouet", "196": "Hémonstoir", "197": "Amily", "199": "Henrichemont", "203": "Couleuvre", "208": "St Pierre le Moutier 2", "209": "Bourbon L Archambaut", "210": "Brou", "211": "Neulise", "214": "St Jean le vieux", "217": "Periers", "218": "Quievrecourt", "221": "Chazelle sur Lyon", "222": "Montverdun", "223": "Dormans", "227": "Glonville 2", "230": "Montalieu Vercieu", "234": "Nesle Normandeuse", "240": "Noyal Pontivy", "246": "Vitre 2", "247": "St Amour", "250": "Dourdan", "254": "Roanne", "259": "Plufur", "266": "Boinville en Mantois", "269": "Loche", "272": "Bonnieres sur Seine", "273": "Piffonds", "274": "St Benin d Azy", "276": "Niort St Florent", "281": "Chauffailles", "282": "St Vincent d Autejac", "283": "Culhat", "289": "Loireauxence", "292": "Reuil", "301": "Coteaux sur Loire", "304": "Le Mans 2", "311": "Chantrigne", "313": "St Thelo", "314": "St Pierre la cour", "317": "Nievroz", "318": "Val Revermont", "320": "Mondoubleau", "321": "Kernoues", "322": "Yvetot Bocage", "324": "Douchy Montcorbon", "328": "Sully sur Loire B", "330": "Vincey", "336": "Ville en Vermois", "337": "Virandeville", "339": "Reims", "340": "Reims B", "342": "Charge", "343": "St Benoit la Foret", "349": "Dombrot le Sec", "352": "Riorges", "362": "Montauban B", "365": "Dogneville 2", "366": "Brieulles sur meuse", "368": "Melesse", "372": "Pujaudran", "374": "Plouye", "376": "Dampierre en Burly", "381": "Dommartin les Remiremont", "382": "St Igny de Roche", "384": "Guengat", "386": "Epeigne sur deme 2", "388": "Maiche", "391": "Wittenheim", "394": "Lacres", "395": "Trelivan", "397": "Vironvay", "399": "Abbeville les Conflans", "401": "Orgeval", "402": "Mantes la Ville", "403": "Liny devant Dun B", "412": "St Leger sur Roanne", "414": "Mairy Mainville",
+}
+
+DB_CONFIG_CHARGE = {
+    "host": "162.19.251.55",
+    "port": 3306,
+    "user": "nidec",
+    "password": "MaV38f5xsGQp83",
+    "database": "nw_borne",
+}
 
 def env(name: str, default: str) -> str:
     """Return the value of an environment variable with a default fallback."""
@@ -79,6 +66,7 @@ SIGNAL_MAP = {
 
 ERROR_CODE = 84
 ERROR_STEP = 7
+NUM_WORKERS = 10  # Number of parallel workers for processing charges
 
 # Heuristics used to qualify the signal behaviour.
 FLAT_ABS_TOLERANCE = 1e-6
@@ -246,7 +234,9 @@ def load_signal(
     base_conditions = f"time >= '{utc_start.isoformat()}' AND time <= '{utc_end.isoformat()}'"
 
     for candidate in project_candidates:
-        tag_condition = f'"{INFLUX_TAG_PROJECT}" = \'{candidate}\''
+        # Escape single quotes in the candidate name for InfluxDB
+        escaped_candidate = candidate.replace("'", "\\'")
+        tag_condition = f'"{INFLUX_TAG_PROJECT}" = \'{escaped_candidate}\''
         query = f'SELECT "{field}" FROM "{INFLUX_MEAS}" WHERE {tag_condition} AND {base_conditions}'
         result = client.query(query)
         if not result.empty:
@@ -330,4 +320,3 @@ def main(argv: Optional[Sequence[str]] = None) -> Path:
 
 if __name__ == "__main__":
     main()
-
